@@ -1,3 +1,6 @@
+// ==========================================
+// CONFIGURATION & INITIAL STATE
+// ==========================================
 const DEFAULT_CATEGORIES = [
   { key: "food", name: "Eating out", icon: "🍱", budget: 6000 },
   { key: "fruit", name: "Fruits", icon: "🍎", budget: 3000 },
@@ -27,6 +30,33 @@ let state = {
 let files = [];
 let editingId = null;
 
+// Configure PDF.js Worker if library is loaded
+if (typeof pdfjsLib !== "undefined") {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+}
+
+// Transaction Status Guardrails (Filters out non-successful payments)
+const FAILED_STATUS_KEYWORDS = [
+  "failed",
+  "declined",
+  "unsuccessful",
+  "cancelled",
+  "canceled",
+  "pending",
+  "processing",
+  "expired",
+  "rejected",
+  "reversed"
+];
+
+function isTransactionSuccessful(textBlock) {
+  const lower = String(textBlock || "").toLowerCase();
+  return !FAILED_STATUS_KEYWORDS.some(keyword => lower.includes(keyword));
+}
+
+// ==========================================
+// UTILITY FUNCTIONS
+// ==========================================
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const money = n => "₹" + Math.round(Number(n) || 0).toLocaleString("en-IN");
@@ -90,6 +120,9 @@ function esc(s) {
   }[m]));
 }
 
+// ==========================================
+// RENDERERS: DASHBOARD & BUDGET
+// ==========================================
 function renderDashboard() {
   const s = spent();
   const actual = BUDGET.income - BUDGET.pg - s;
@@ -224,6 +257,9 @@ function deleteCategory(catKey) {
   save();
 }
 
+// ==========================================
+// RENDERERS: TRANSACTIONS & KANBAN
+// ==========================================
 function renderTransactions() {
   if (!$("#rows")) return;
 
@@ -424,6 +460,9 @@ function renderAll() {
   if ($("#uncatCount")) $("#uncatCount").textContent = n || "";
 }
 
+// ==========================================
+// ROUTING & NAVIGATION (NO JUMP-SCROLL)
+// ==========================================
 const VALID_VIEWS = ["dashboard", "transactions", "upload", "budget"];
 
 function getActiveViewFromHash() {
@@ -446,12 +485,10 @@ function showView(v, updateHash = true) {
     }[targetView];
   }
 
-  // Update URL hash without triggering browser jump-scroll
   if (updateHash && window.location.hash !== `#${targetView}`) {
     history.pushState(null, "", `#${targetView}`);
   }
 
-  // Ensure view scroll position resets cleanly to top
   window.scrollTo(0, 0);
   const contentArea = $(".content");
   if (contentArea) contentArea.scrollTop = 0;
@@ -460,7 +497,6 @@ function showView(v, updateHash = true) {
 $$(".nav-item").forEach(b => b.onclick = () => showView(b.dataset.view));
 $$("[data-go]").forEach(b => b.onclick = () => showView(b.dataset.go));
 
-// Listen for browser Back/Forward navigation
 window.addEventListener("popstate", () => {
   showView(getActiveViewFromHash(), false);
 });
@@ -474,6 +510,9 @@ if (sidebarToggle && sidebar) {
   };
 }
 
+// ==========================================
+// MODALS & EXPENSE FORM
+// ==========================================
 if ($("#addExpenseBtn")) $("#addExpenseBtn").onclick = () => openModal();
 if ($("#addCategoryBtn")) $("#addCategoryBtn").onclick = handleAddCategory;
 if ($("#quickAdd")) $("#quickAdd").onclick = () => openModal();
@@ -529,14 +568,28 @@ if ($("#form")) {
   };
 }
 
+// ==========================================
+// FILE HANDLERS & UPLOAD PREVIEWS
+// ==========================================
 function handleFiles(selectedFiles) {
   files = [...selectedFiles];
   if ($("#previews")) {
-    $("#previews").innerHTML = files.map((f, i) => `
-      <div class="preview">
-        <img src="${URL.createObjectURL(f)}" alt="Screenshot ${i + 1}">
-      </div>
-    `).join("");
+    $("#previews").innerHTML = files.map((f, i) => {
+      const isPdf = f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
+      if (isPdf) {
+        return `
+          <div class="preview pdf-preview" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:12px;border:1px solid #ccc;border-radius:8px;background:#f9f9f9;width:120px;height:120px;text-align:center;">
+            <span style="font-size:2.2rem;">📄</span>
+            <span style="font-size:0.75rem;word-break:break-all;margin-top:6px;font-weight:600;color:#333;">${esc(f.name)}</span>
+          </div>
+        `;
+      }
+      return `
+        <div class="preview">
+          <img src="${URL.createObjectURL(f)}" alt="Screenshot ${i + 1}">
+        </div>
+      `;
+    }).join("");
   }
   if ($("#importBtn")) $("#importBtn").disabled = !files.length;
 }
@@ -554,6 +607,9 @@ if (dropzone) {
 
 if ($("#importBtn")) $("#importBtn").onclick = runOCR;
 
+// ==========================================
+// OCR & PDF PARSING LOGIC
+// ==========================================
 function isTimeToken(text) {
   return /^\d{1,2}:\d{2}(\s?[AP]M)?$/i.test(String(text || "").trim());
 }
@@ -724,6 +780,7 @@ function extractDateTime(words) {
   return { date, time };
 }
 
+// Extract rows from image with status guardrail
 function extractRows(data) {
   const words = data.words || [];
   if (!words.length) return [];
@@ -784,6 +841,10 @@ function extractRows(data) {
       return cy >= top && cy <= bottom;
     });
 
+    // Enforce status guardrail on raw screenshot text
+    const regionText = regionWords.map(w => w.text).join(" ");
+    if (!isTransactionSuccessful(regionText)) continue;
+
     const merchant = merchantFromRegion(regionWords, current.word.bbox.x0, top, bottom);
     const dateTime = extractDateTime(regionWords);
 
@@ -800,6 +861,66 @@ function extractRows(data) {
   }
 
   return results.sort((a, b) => a._y - b._y).map(({ _y, ...row }) => row);
+}
+
+// PDF Parser using PDF.js
+async function parsePDFFile(file) {
+  if (typeof pdfjsLib === "undefined") {
+    console.error("PDF.js library is missing.");
+    return [];
+  }
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const transactions = [];
+
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const textContent = await page.getTextContent();
+    const viewport = page.getViewport({ scale: 1.0 });
+
+    const items = textContent.items.map(item => {
+      const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
+      return {
+        text: item.str,
+        bbox: {
+          x0: tx[4],
+          y0: tx[5] - item.height,
+          x1: tx[4] + item.width,
+          y1: tx[5]
+        }
+      };
+    });
+
+    const lines = buildLines(items);
+
+    for (const line of lines) {
+      const lineText = line.words.map(w => w.text).join(" ");
+
+      // Enforce status guardrail
+      if (!isTransactionSuccessful(lineText)) {
+        continue;
+      }
+
+      const foundAmount = findLineAmount(line, viewport.width);
+      if (foundAmount) {
+        const dateTime = extractDateTime(line.words);
+        const merchant = merchantFromRegion(line.words, foundAmount.word.bbox.x0, line.cy - 15, line.cy + 15);
+
+        transactions.push({
+          id: generateId(),
+          merchant: merchant || "PDF Statement Payment",
+          amount: foundAmount.amount,
+          date: dateTime.date,
+          time: dateTime.time,
+          category: "",
+          source: "PDF Statement"
+        });
+      }
+    }
+  }
+
+  return transactions;
 }
 
 function preprocessImage(file) {
@@ -860,45 +981,31 @@ function preprocessImage(file) {
   });
 }
 
+// Integrated Import Orchestration (Images + PDFs)
 async function runOCR() {
   if (!files.length) return;
 
   if ($("#importBtn")) $("#importBtn").disabled = true;
   if ($("#ocrProgressWrap")) $("#ocrProgressWrap").classList.remove("hidden");
-  if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Reading transaction table…";
+  if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Processing statement files…";
   if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = "0%";
 
   let added = 0;
   let skipped = 0;
 
   try {
-    const worker = await Tesseract.createWorker("eng", 1, {
-      logger: message => {
-        if (message.status === "recognizing text") {
-          const progress = Math.round((message.progress || 0) * 100);
-          if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = `${progress}%`;
-          if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Reading screenshot… ${progress}%`;
-        }
-      }
-    });
+    const imageFiles = files.filter(f => f.type.startsWith("image/") && !f.name.toLowerCase().endsWith(".pdf"));
+    const pdfFiles = files.filter(f => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"));
 
-    await worker.setParameters({
-      preserve_interword_spaces: "1",
-      tessedit_pageseg_mode: "6",
-      user_defined_dpi: "300"
-    });
+    // 1. Process PDF Statement files
+    for (let i = 0; i < pdfFiles.length; i++) {
+      if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Parsing PDF statement ${i + 1} of ${pdfFiles.length}…`;
+      const pdfTx = await parsePDFFile(pdfFiles[i]);
 
-    for (let i = 0; i < files.length; i++) {
-      if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Reading screenshot ${i + 1} of ${files.length}…`;
-      const processed = await preprocessImage(files[i]);
-      const result = await worker.recognize(processed);
-      const transactions = extractRows(result.data);
-
-      for (const transaction of transactions) {
+      for (const transaction of pdfTx) {
         const duplicate = state.transactions.some(
           existing =>
             existing.date === transaction.date &&
-            existing.time === transaction.time &&
             Number(existing.amount) === Number(transaction.amount) &&
             String(existing.merchant).toLowerCase() === String(transaction.merchant).toLowerCase()
         );
@@ -912,21 +1019,65 @@ async function runOCR() {
       }
     }
 
-    await worker.terminate();
+    // 2. Process Image Screenshots via Tesseract
+    if (imageFiles.length) {
+      const worker = await Tesseract.createWorker("eng", 1, {
+        logger: message => {
+          if (message.status === "recognizing text") {
+            const progress = Math.round((message.progress || 0) * 100);
+            if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = `${progress}%`;
+            if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Reading screenshot… ${progress}%`;
+          }
+        }
+      });
+
+      await worker.setParameters({
+        preserve_interword_spaces: "1",
+        tessedit_pageseg_mode: "6",
+        user_defined_dpi: "300"
+      });
+
+      for (let i = 0; i < imageFiles.length; i++) {
+        if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Reading screenshot ${i + 1} of ${imageFiles.length}…`;
+        const processed = await preprocessImage(imageFiles[i]);
+        const result = await worker.recognize(processed);
+        const transactions = extractRows(result.data);
+
+        for (const transaction of transactions) {
+          const duplicate = state.transactions.some(
+            existing =>
+              existing.date === transaction.date &&
+              existing.time === transaction.time &&
+              Number(existing.amount) === Number(transaction.amount) &&
+              String(existing.merchant).toLowerCase() === String(transaction.merchant).toLowerCase()
+          );
+
+          if (duplicate) {
+            skipped++;
+          } else {
+            state.transactions.push(transaction);
+            added++;
+          }
+        }
+      }
+
+      await worker.terminate();
+    }
+
     files = [];
     if ($("#fileInput")) $("#fileInput").value = "";
     if ($("#previews")) $("#previews").innerHTML = "";
     if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = "100%";
-    if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `${added} transaction${added === 1 ? "" : "s"} detected`;
+    if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `${added} transaction${added === 1 ? "" : "s"} imported`;
 
     save();
     showView("transactions");
-    if ($("#ocrStatus")) $("#ocrStatus").textContent = "● OCR engine ready";
-    alert(`${added} transaction${added === 1 ? "" : "s"} imported${skipped ? `; ${skipped} duplicate${skipped === 1 ? "" : "s"} skipped` : ""}.`);
+    if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Ready";
+    alert(`${added} transaction${added === 1 ? "" : "s"} imported${skipped ? `; ${skipped} duplicate/failed entry${skipped === 1 ? "" : "ies"} excluded` : ""}.`);
   } catch (error) {
-    console.error("OCR error:", error);
-    if ($("#ocrStatus")) $("#ocrStatus").textContent = "● OCR error";
-    alert("The screenshot could not be processed.");
+    console.error("Import error:", error);
+    if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Error processing file";
+    alert("An error occurred while reading the files.");
   } finally {
     if ($("#importBtn")) $("#importBtn").disabled = !files.length;
     setTimeout(() => {
@@ -935,5 +1086,8 @@ async function runOCR() {
   }
 }
 
+// ==========================================
+// INITIALIZATION
+// ==========================================
 renderAll();
 showView(getActiveViewFromHash(), true);
