@@ -1,21 +1,29 @@
+const DEFAULT_CATEGORIES = [
+  { key: "food", name: "Eating out", icon: "🍱", budget: 6000 },
+  { key: "fruit", name: "Fruits", icon: "🍎", budget: 3000 },
+  { key: "utilities", name: "Utilities", icon: "🧴", budget: 1000 },
+  { key: "snacks", name: "Coffee & snacks", icon: "☕", budget: 1000 },
+  { key: "shopping", name: "Shopping", icon: "🛍️", budget: 1000 },
+  { key: "misc", name: "Miscellaneous", icon: "📦", budget: 1000 },
+  { key: "transport", name: "Transport", icon: "🚶", budget: 500 }
+];
+
 const BUDGET = {
   income: 80000,
   pg: 21000,
   savings: 40000,
-  categories: [
-    { key: "food", name: "Eating out", icon: "🍱", budget: 6000 },
-    { key: "fruit", name: "Fruits", icon: "🍎", budget: 3000 },
-    { key: "utilities", name: "Utilities", icon: "🧴", budget: 1000 },
-    { key: "snacks", name: "Coffee & snacks", icon: "☕", budget: 1000 },
-    { key: "shopping", name: "Shopping", icon: "🛍️", budget: 1000 },
-    { key: "misc", name: "Miscellaneous", icon: "📦", budget: 1000 },
-    { key: "transport", name: "Transport", icon: "🚶", budget: 500 }
-  ],
   flex: 5500
 };
 
 const KEY = "budgetos_simple_ocr";
-let state = JSON.parse(localStorage.getItem(KEY) || "null") || { transactions: [] };
+let loadedState = JSON.parse(localStorage.getItem(KEY) || "null") || {};
+let state = {
+  transactions: loadedState.transactions || [],
+  categories: (loadedState.categories && loadedState.categories.length) 
+    ? loadedState.categories 
+    : [...DEFAULT_CATEGORIES]
+};
+
 let files = [];
 let editingId = null;
 
@@ -46,7 +54,7 @@ function catTotal(k) {
 }
 
 function catName(k) {
-  return BUDGET.categories.find(c => c.key === k)?.name || "Uncategorized";
+  return state.categories.find(c => c.key === k)?.name || "Uncategorized";
 }
 
 function unc() {
@@ -102,15 +110,15 @@ function renderDashboard() {
   if ($("#monthLabel")) $("#monthLabel").textContent = new Date().toLocaleDateString("en-IN", { month: "long", year: "numeric" });
 
   if ($("#categories")) {
-    $("#categories").innerHTML = BUDGET.categories.map(c => {
+    $("#categories").innerHTML = state.categories.map(c => {
       const v = catTotal(c.key);
-      const cp = Math.min(100, (v / c.budget) * 100);
+      const cp = Math.min(100, (v / (c.budget || 1)) * 100);
       return `
         <div class="category">
           <div class="icon">${c.icon}</div>
-          <div class="name">${c.name}</div>
+          <div class="name">${esc(c.name)}</div>
           <div class="value">${money(v)}</div>
-          <div class="muted">of ${money(c.budget)}</div>
+          <div class="muted">of ${money(c.budget || 0)}</div>
           <div class="mini">
             <span style="width:${cp}%"></span>
           </div>
@@ -133,7 +141,7 @@ function renderDashboard() {
         <div class="transaction-row">
           <div>
             <div class="merchant">${esc(t.merchant)}</div>
-            <div class="muted">${fmtDate(t.date)} ${t.time ? ` • ${esc(t.time)}` : ""} • ${catName(t.category)}</div>
+            <div class="muted">${fmtDate(t.date)} ${t.time ? ` • ${esc(t.time)}` : ""} • ${esc(catName(t.category))}</div>
           </div>
           <span class="tag">${esc(t.source || "Manual")}</span>
           <div class="amount">${money(t.amount)}</div>
@@ -165,12 +173,55 @@ function renderDashboard() {
 function options(selected) {
   return `
     <option value="" ${!selected ? "selected" : ""}>Uncategorized</option>
-    ${BUDGET.categories.map(c => `
+    ${state.categories.map(c => `
       <option value="${c.key}" ${selected === c.key ? "selected" : ""}>
-        ${c.icon} ${c.name}
+        ${c.icon} ${esc(c.name)}
       </option>
     `).join("")}
   `;
+}
+
+function handleAddCategory() {
+  const name = prompt("Enter new category name (e.g. Health, Subscriptions):");
+  if (!name || !name.trim()) return;
+
+  const cleanName = name.trim();
+  const key = cleanName.toLowerCase().replace(/[^a-z0-9]/g, "_") + "_" + Date.now().toString(36);
+
+  if (state.categories.some(c => c.name.toLowerCase() === cleanName.toLowerCase())) {
+    alert("A category with this name already exists.");
+    return;
+  }
+
+  const icon = prompt(`Enter an icon/emoji for "${cleanName}":`, "🏷️") || "🏷️";
+  const budgetStr = prompt(`Enter monthly budget amount for "${cleanName}" (₹):`, "1000");
+  const budget = Math.max(0, Number(budgetStr) || 0);
+
+  state.categories.push({
+    key: key,
+    name: cleanName,
+    icon: icon.trim(),
+    budget: budget
+  });
+
+  save();
+}
+
+function deleteCategory(catKey) {
+  const categoryToDelete = state.categories.find(c => c.key === catKey);
+  if (!categoryToDelete) return;
+
+  const confirmed = confirm(`Are you sure you want to delete the "${categoryToDelete.name}" category?\nTransactions in this category will be moved to Uncategorized.`);
+  if (!confirmed) return;
+
+  state.transactions.forEach(tx => {
+    if (tx.category === catKey) {
+      tx.category = "";
+    }
+  });
+
+  state.categories = state.categories.filter(c => c.key !== catKey);
+  save();
 }
 
 function renderTransactions() {
@@ -194,7 +245,7 @@ function renderTransactions() {
 
   const columns = [
     { key: "", name: "Uncategorized", icon: "📥" },
-    ...BUDGET.categories.map(c => ({ key: c.key, name: c.name, icon: c.icon }))
+    ...state.categories.map(c => ({ key: c.key, name: c.name, icon: c.icon }))
   ];
 
   const boardHtml = `
@@ -202,15 +253,21 @@ function renderTransactions() {
       ${columns.map(col => {
         const colTx = list.filter(t => (col.key === "" ? !t.category : t.category === col.key));
         const colSum = colTx.reduce((a, t) => a + Number(t.amount || 0), 0);
+        const isUncategorized = col.key === "";
         return `
           <div class="kanban-column" data-col-key="${col.key}">
             <div class="kanban-column-header">
               <div class="kanban-title">
                 <span>${col.icon}</span>
-                <strong>${col.name}</strong>
+                <strong>${esc(col.name)}</strong>
                 <span class="kanban-badge">${colTx.length}</span>
               </div>
-              <div class="kanban-col-sum">${money(colSum)}</div>
+              <div class="kanban-header-right">
+                <span class="kanban-col-sum">${money(colSum)}</span>
+                ${!isUncategorized ? `
+                  <button class="delete-category-btn" data-cat-key="${col.key}" title="Delete Category">×</button>
+                ` : ""}
+              </div>
             </div>
             <div class="kanban-cards-container">
               ${colTx.map(t => `
@@ -243,6 +300,13 @@ function renderTransactions() {
       e.stopPropagation();
       state.transactions = state.transactions.filter(t => t.id !== btn.dataset.del);
       save();
+    };
+  });
+
+  $$(".delete-category-btn").forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      deleteCategory(btn.dataset.catKey);
     };
   });
 
@@ -310,14 +374,14 @@ function attachKanbanDragListeners() {
 function renderBudget() {
   if (!$("#budgetTable")) return;
 
-  const rows = BUDGET.categories.map(c => {
+  const rows = state.categories.map(c => {
     const v = catTotal(c.key);
     return `
       <div class="budget-line">
-        <strong>${c.icon} ${c.name}</strong>
-        <span>${money(c.budget)}</span>
+        <strong>${c.icon} ${esc(c.name)}</strong>
+        <span>${money(c.budget || 0)}</span>
         <span>${money(v)}</span>
-        <span>${v <= c.budget ? "On track" : "Over budget"}</span>
+        <span>${v <= (c.budget || 0) ? "On track" : "Over budget"}</span>
       </div>
     `;
   }).join("");
@@ -376,6 +440,17 @@ function showView(v) {
 $$(".nav-item").forEach(b => b.onclick = () => showView(b.dataset.view));
 $$("[data-go]").forEach(b => b.onclick = () => showView(b.dataset.go));
 
+const sidebar = $("#sidebar");
+const sidebarToggle = $("#sidebarToggle");
+if (sidebarToggle && sidebar) {
+  sidebarToggle.onclick = () => {
+    sidebar.classList.toggle("collapsed");
+    sidebarToggle.textContent = sidebar.classList.contains("collapsed") ? "»" : "«";
+  };
+}
+
+if ($("#addExpenseBtn")) $("#addExpenseBtn").onclick = () => openModal();
+if ($("#addCategoryBtn")) $("#addCategoryBtn").onclick = handleAddCategory;
 if ($("#quickAdd")) $("#quickAdd").onclick = () => openModal();
 if ($("#closeModal")) $("#closeModal").onclick = () => $("#modal").classList.add("hidden");
 
@@ -836,96 +911,3 @@ async function runOCR() {
 }
 
 renderAll();
-
-// Sidebar collapse toggle logic
-const sidebarToggle = $("#sidebarToggle");
-const sidebar = $(".sidebar");
-
-if (sidebarToggle && sidebar) {
-  sidebarToggle.onclick = () => {
-    sidebar.classList.toggle("collapsed");
-    const isCollapsed = sidebar.classList.contains("collapsed");
-    sidebarToggle.textContent = isCollapsed ? "»" : "«";
-    sidebarToggle.title = isCollapsed ? "Expand Sidebar" : "Collapse Sidebar";
-    localStorage.setItem("sidebar_collapsed", isCollapsed ? "true" : "false");
-  };
-
-  // Restore sidebar state from previous session
-  if (localStorage.getItem("sidebar_collapsed") === "true") {
-    sidebar.classList.add("collapsed");
-    sidebarToggle.textContent = "»";
-    sidebarToggle.title = "Expand Sidebar";
-  }
-}
-
-function renderCategoryHeader(category) {
-  const isUncategorized = category.id === 'uncategorized';
-  
-  return `
-    <div class="kanban-column-header">
-      <div class="kanban-title">
-        <span class="cat-icon">${category.icon || '📁'}</span>
-        <span class="cat-name">${category.name}</span>
-        <span class="kanban-badge">${category.count || 0}</span>
-      </div>
-      <div class="kanban-header-right">
-        <span class="kanban-col-sum">₹${category.total || 0}</span>
-        ${!isUncategorized ? `
-          <button class="delete-category-btn" data-id="${category.id}" title="Delete Category">×</button>
-        ` : ''}
-      </div>
-    </div>
-  `;
-}
-
-// Delete category and fallback expenses to Uncategorized
-function deleteCategory(categoryId) {
-  const categoryToDelete = categories.find(c => c.id === categoryId);
-  if (!categoryToDelete) return;
-
-  const confirmed = confirm(`Are you sure you want to delete this category?`);
-  if (!confirmed) return;
-
-  // Revert expenses in this category back to Uncategorized
-  transactions.forEach(tx => {
-    if (tx.categoryId === categoryId || tx.category === categoryToDelete.name) {
-      tx.categoryId = 'uncategorized';
-      tx.category = 'Uncategorized';
-    }
-  });
-
-  // Remove the category
-  categories = categories.filter(c => c.id !== categoryId);
-
-  // Save state & re-render board
-  saveData();
-  renderKanbanBoard();
-}
-
-// Add new category handler
-function handleAddCategory() {
-  const name = prompt("Enter new category name (e.g. Food, Shopping, Utilities):");
-  if (!name || !name.trim()) return;
-
-  const icon = prompt("Enter an icon/emoji for this category:", "🏷️") || "🏷️";
-  const newId = name.toLowerCase().trim().replace(/\s+/g, '-');
-
-  if (categories.some(c => c.id === newId)) {
-    alert("A category with this name already exists.");
-    return;
-  }
-
-  categories.push({ id: newId, name: name.trim(), icon: icon.trim() });
-  saveData();
-  renderKanbanBoard();
-}
-
-// Event Delegation for Column Delete Buttons
-document.getElementById('kanbanBoard').addEventListener('click', (e) => {
-  if (e.target.classList.contains('delete-category-btn')) {
-    const catId = e.target.getAttribute('data-id');
-    deleteCategory(catId);
-  }
-});
-
-document.getElementById('addCategoryBtn').addEventListener('click', handleAddCategory);
