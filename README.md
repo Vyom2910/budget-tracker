@@ -1,88 +1,47 @@
-# BudgetOS — Simple OCR Import MVP
+# 📊 BudgetOS - OCR Expense Tracker
 
-This build intentionally removes the complex vision/LLM pipeline.
+A lightweight, zero-backend budget tracker and receipt scanner that runs entirely inside your browser. Powered by client-side JavaScript, Tesseract.js OCR, and LocalStorage—no backend server or database required.
 
-## The one thing the screenshot feature does
+---
 
-**Upload a payment-history screenshot → OCR finds individual transaction rows → each row is automatically added as an Uncategorized transaction.**
+## ✨ Features
 
-There is no AI categorization, no approval step, and no manual transcription.
+* **100% Client-Side & Private:** All OCR processing and transaction data stay in your browser (`LocalStorage`). No images or data are sent to external servers.
+* **Smart OCR Date & Merchant Extraction:** Automatically parses transaction dates, times, amounts, and merchant names directly from payment screenshots (e.g., PhonePe, Google Pay, Paytm).
+* **Live Financial Summary:** Displays monthly savings target tracking, suggested weekly pacing, and category budgets.
+* **Transactions Overview:** Complete breakdown with total expenditure sum, transaction counts, manual categorization, and duplicate detection.
+* **Cross-Device Ready:** Works on both desktop browsers and mobile devices.
 
-You manually select the category afterward.
+---
 
-## Categories
+## 🚀 How to Run Locally
 
-- Eating out
-- Fruits
-- Utilities
-- Coffee & snacks
-- Shopping
-- Miscellaneous
-- Transport
+Because this application relies strictly on standard web technologies (`index.html`, `styles.css`, `app.js`), you no longer need Python, Node.js, or local backend servers.
 
-## Why this version does not use Ollama
+1. Double-click **`index.html`** in your project folder to open it directly in Chrome, Edge, Safari, or Firefox.
+2. *(Optional)* Use the VS Code **Live Server** extension for hot-reloading while editing code.
 
-For this particular workflow, the screenshot is a table/history list. We only need text/number extraction and row grouping. The MVP uses **Tesseract.js in the browser** so there is no Ollama setup, no Python OCR dependency, and no local AI model to manage.
+---
 
-The app handles the OCR automatically when you press **Read & import transactions**.
+## 🌐 Web App Deployment (GitHub Pages)
 
-## Run
+To host this as a live web application accessible on your laptop and phone:
 
-### Easiest
+1. Push this repository to GitHub.
+2. Navigate to **Settings** > **Pages** in your repository.
+3. Under **Build and deployment**, set **Source** to `Deploy from a branch`.
+4. Select `main` branch and `/ (root)` folder, then click **Save**.
+5. Access your app at: `https://<YOUR-GITHUB-USERNAME>.github.io/<YOUR-REPO-NAME>/`
 
-Double-click `start.bat`.
+*Tip: On mobile, open your GitHub Pages URL in Chrome or Safari and select **Add to Home Screen** to install it as a standalone web app.*
 
-It starts a local web server and opens:
+---
 
-```text
-http://localhost:8000
-```
+## 🛠️ Update & Maintenance Workflow
 
-### Or manually
+To push new code changes or UI tweaks to your live app using VS Code terminal:
 
-From PowerShell in this folder:
-
-```powershell
-python -m http.server 8000
-```
-
-Then open:
-
-```text
-http://localhost:8000
-```
-
-## Test
-
-Upload one payment-history screenshot.
-
-The OCR parser is designed for history rows where:
-- merchant text is on the left
-- payment amount is on the right
-- dates/times are separate text
-- the screenshot may have decorative UI elements
-
-It also includes a correction for the common OCR error where the Indian ₹ symbol is recognized as a leading `2` (for example `-₹138` becoming `-2138`).
-
-## Data
-
-Transactions are stored in browser `localStorage`.
-
-Screenshot processing happens in the browser using Tesseract.js. The image is not sent to Ollama.
-
-## Next development step
-
-Once row extraction is reliable on your actual PhonePe/GPay screenshots, the category UI can be expanded and the budget logic can be refined without changing the import architecture.
-
-
-## V2 OCR accuracy improvements
-
-This build improves row extraction without adding AI:
-- Automatic image upscaling and grayscale/contrast preprocessing
-- Tesseract PSM 6 for block/table-like history screens
-- Higher OCR DPI hint
-- Explicit filtering of timestamps and dates from amount detection
-- Amount selection biased to the right side of the row
-- Handles OCR currency-symbol errors such as `₹138` becoming `2138`
-- Reconstructs some wrapped rows
-- De-duplicates only exact row matches, so separate merchants with the same amount are preserved
+```bash
+git add .
+git commit -m "Update feature or UI improvements"
+git push
