@@ -9,29 +9,38 @@
 </head>
 <body>
   <div class="app">
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
       <div class="logo">
-        <span class="dot"></span>
-        <h2>BudgetOS</h2>
+        <div class="logo-brand">
+          <div class="dot"></div>
+          <h2>BudgetOS</h2>
+        </div>
+        <button id="sidebarToggle" class="toggle-btn" title="Toggle Sidebar">«</button>
       </div>
+
       <nav>
-        <button class="nav-item active" data-view="dashboard">
-          <span>Dashboard</span>
+        <button class="nav-item active" data-view="dashboard" title="Dashboard">
+          <span class="nav-icon">📊</span>
+          <span class="nav-text">Dashboard</span>
         </button>
-        <button class="nav-item" data-view="transactions">
-          <span>Transactions</span>
-          <span id="uncatCount" class="badge"></span>
+        <button class="nav-item" data-view="transactions" title="Transactions">
+          <span class="nav-icon">💳</span>
+          <span class="nav-text">Transactions</span>
+          <span class="badge" id="uncatCount"></span>
         </button>
-        <button class="nav-item" data-view="upload">
-          <span>Upload screenshot</span>
+        <button class="nav-item" data-view="upload" title="Upload screenshot">
+          <span class="nav-icon">📤</span>
+          <span class="nav-text">Upload</span>
         </button>
-        <button class="nav-item" data-view="budget">
-          <span>Budget</span>
+        <button class="nav-item" data-view="budget" title="Budget">
+          <span class="nav-icon">🎯</span>
+          <span class="nav-text">Budget</span>
         </button>
       </nav>
+
       <div class="sidebar-footer">
-        <div class="muted">Monthly goal</div>
-        <strong>Save ₹40,000+</strong>
+        <div class="subtext">SEP 2026</div>
+        <div class="muted">Monthly Plan</div>
       </div>
     </aside>
 

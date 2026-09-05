@@ -25,24 +25,41 @@ body {
 .app {
   display: flex;
   min-height: 100vh;
+  width: 100vw;
+  overflow-x: hidden;
 }
 
+/* Collapsible Sidebar Styles */
 .sidebar {
   width: 240px;
-  flex-shrink: 0; /* Prevents sidebar from shrinking on wide pages */
+  flex-shrink: 0;
   background: #181d23;
   border-right: 1px solid rgba(255, 255, 255, 0.06);
   padding: 24px 16px;
   display: flex;
   flex-direction: column;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.sidebar.collapsed {
+  width: 72px;
+  padding: 24px 12px;
 }
 
 .logo {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
   margin-bottom: 32px;
-  padding-left: 8px;
+}
+
+.logo-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
 }
 
 .dot {
@@ -50,17 +67,40 @@ body {
   height: 10px;
   background: #91b66a;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .logo h2 {
   font-size: 1.2rem;
+  color: #fff;
+  transition: opacity 0.2s ease;
+}
+
+.toggle-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #8e9b9e;
+  font-size: 1.1rem;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
   color: #fff;
 }
 
 nav {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   flex-grow: 1;
 }
 
@@ -74,9 +114,24 @@ nav {
   font-size: 0.95rem;
   cursor: pointer;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  transition: all 0.2s;
+  gap: 12px;
+  transition: all 0.2s ease;
+  width: 100%;
+}
+
+.nav-icon {
+  font-size: 1.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  flex-shrink: 0;
+}
+
+.nav-text {
+  flex-grow: 1;
+  transition: opacity 0.2s ease;
 }
 
 .nav-item:hover {
@@ -104,13 +159,38 @@ nav {
   background: rgba(0, 0, 0, 0.2);
   border-radius: 8px;
   font-size: 0.85rem;
+  transition: opacity 0.2s ease;
+}
+
+/* Collapsed State Tweaks */
+.sidebar.collapsed .logo-brand h2,
+.sidebar.collapsed .nav-text,
+.sidebar.collapsed .badge,
+.sidebar.collapsed .sidebar-footer {
+  opacity: 0;
+  pointer-events: none;
+  display: none;
+}
+
+.sidebar.collapsed .logo {
+  justify-content: center;
+}
+
+.sidebar.collapsed .logo-brand {
+  display: none;
+}
+
+.sidebar.collapsed .nav-item {
+  justify-content: center;
+  padding: 10px 0;
 }
 
 .content {
   flex-grow: 1;
-  min-width: 0; /* Ensures inner flex overflow doesn't affect main layout */
+  min-width: 0;
   padding: 32px;
   overflow-y: auto;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .topbar {

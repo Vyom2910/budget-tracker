@@ -836,3 +836,24 @@ async function runOCR() {
 }
 
 renderAll();
+
+// Sidebar collapse toggle logic
+const sidebarToggle = $("#sidebarToggle");
+const sidebar = $(".sidebar");
+
+if (sidebarToggle && sidebar) {
+  sidebarToggle.onclick = () => {
+    sidebar.classList.toggle("collapsed");
+    const isCollapsed = sidebar.classList.contains("collapsed");
+    sidebarToggle.textContent = isCollapsed ? "»" : "«";
+    sidebarToggle.title = isCollapsed ? "Expand Sidebar" : "Collapse Sidebar";
+    localStorage.setItem("sidebar_collapsed", isCollapsed ? "true" : "false");
+  };
+
+  // Restore sidebar state from previous session
+  if (localStorage.getItem("sidebar_collapsed") === "true") {
+    sidebar.classList.add("collapsed");
+    sidebarToggle.textContent = "»";
+    sidebarToggle.title = "Expand Sidebar";
+  }
+}
