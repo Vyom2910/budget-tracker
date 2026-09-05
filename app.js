@@ -446,15 +446,22 @@ function showView(v, updateHash = true) {
     }[targetView];
   }
 
+  // Update URL hash without triggering browser jump-scroll
   if (updateHash && window.location.hash !== `#${targetView}`) {
-    window.location.hash = targetView;
+    history.pushState(null, "", `#${targetView}`);
   }
+
+  // Ensure view scroll position resets cleanly to top
+  window.scrollTo(0, 0);
+  const contentArea = $(".content");
+  if (contentArea) contentArea.scrollTop = 0;
 }
 
 $$(".nav-item").forEach(b => b.onclick = () => showView(b.dataset.view));
 $$("[data-go]").forEach(b => b.onclick = () => showView(b.dataset.go));
 
-window.addEventListener("hashchange", () => {
+// Listen for browser Back/Forward navigation
+window.addEventListener("popstate", () => {
   showView(getActiveViewFromHash(), false);
 });
 
