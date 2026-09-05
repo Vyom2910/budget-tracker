@@ -119,28 +119,41 @@ function esc(s) {
 function isNoiseMerchant(str) {
   const l = String(str || "").toLowerCase().trim();
   if (!l || l.length < 2) return true;
+  if (/^h[i1l]st?[o0]r[y1]|hisory|histry|history$/i.test(l)) return true;
+  
   const noiseWords = [
-    "history", "filter", "filters", "search", "check balance", "view details",
+    "history", "hisory", "histry", "filter", "filters", "search", "check balance", "view details",
     "successful", "completed", "payment history", "transaction history",
     "home", "help", "support", "today", "yesterday", "paid to", "sent to"
   ];
   if (noiseWords.includes(l)) return true;
-  if (/^\d{1,2}:\d{2}/.test(l)) return true;
+  if (/^\d{1,2}[\.:]\d{2}/.test(l)) return true;
   if (/^\d+$/.test(l)) return true;
   return false;
 }
 
 function isDateTimeLine(str) {
   if (!str) return false;
-  return /\b\d{1,2}:\d{2}\s*(?:AM|PM)?\b/i.test(str) ||
+  return /\b\d{1,2}[\.:]\d{2}\s*(?:AM|PM)?\b/i.test(str) ||
          /\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b/i.test(str) ||
          /\b(?:Today|Yesterday)\b/i.test(str);
 }
 
 function cleanMerchantName(str) {
   if (!str) return "";
-  let clean = str
-    .replace(/^(Paid\s+to|Paid\s+at|Sent\s+to|Payment\s+to|Paying|To|Transfer\s+to)[:\s]*/i, "")
+  let clean = String(str || "").trim();
+
+  // Strip leading clock digits & icon artifacts (5.8, 5:35, gi., WwW, etc.)
+  clean = clean
+    .replace(/^(?:5\.8|gi\.\s*\d*|www|ww|vvw|vw|gt\.|g1\.|g\.)\s*/i, "")
+    .replace(/^\d{1,2}[\.:]\d{2}\s*/, "")
+    .replace(/^\d+(\.\d+)?\s+/, "")
+    .replace(/^(Paid\s+to|Paid\s+at|Sent\s+to|Payment\s+to|Paying|To|Transfer\s+to)[:\s]*/i, "");
+
+  // Strip trailing transaction amounts or system keywords
+  clean = clean
+    .replace(/[-\u2013\u2014\u2212]\s*[₹RsINRinr\?fF£tT~*§¤\$]?\s*\d+.*/gi, "")
+    .replace(/\s*-\s*\d+\s*$/g, "")
     .replace(/(?:SUCCESSFUL|SUCCESS|COMPLETED|PAID|FAILED|PENDING|DEBITED|CREDITED|UPI\s*ID|REF|TXN|ORDER|UTR|IMPS|NEFT).*/gi, "")
     .replace(/[\?₹fF£tT~*§¤\$]/g, "")
     .replace(/[^\w\s&.-]/gi, " ")
@@ -161,8 +174,8 @@ function extractDateTime(input) {
 
   const cleanText = rawText.replace(/[,;]/g, " ");
 
-  const timeMatch = cleanText.match(/\b(\d{1,2}:\d{2}\s*(?:AM|PM)?)\b/i);
-  if (timeMatch) time = timeMatch[1].replace(/\s+/g, "");
+  const timeMatch = cleanText.match(/\b(\d{1,2}[\.:]\d{2}\s*(?:AM|PM)?)\b/i);
+  if (timeMatch) time = timeMatch[1].replace(/\./g, ":").replace(/\s+/g, "");
 
   const lowerText = cleanText.toLowerCase();
   const now = new Date();
@@ -180,8 +193,6 @@ function extractDateTime(input) {
 
     const dateMatch1 = cleanText.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*(?:\s+(\d{2,4}))?\b/i);
     const dateMatch2 = cleanText.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+(\d{2,4}))?\b/i);
-    const dateMatch3 = cleanText.match(/\b(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})\b/);
-    const dateMatch4 = cleanText.match(/\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/);
 
     let day, month, year = now.getFullYear();
 
@@ -199,15 +210,6 @@ function extractDateTime(input) {
         year = parseInt(dateMatch2[3], 10);
         if (year < 100) year += 2000;
       }
-    } else if (dateMatch3) {
-      day = parseInt(dateMatch3[1], 10);
-      month = parseInt(dateMatch3[2], 10);
-      year = parseInt(dateMatch3[3], 10);
-      if (year < 100) year += 2000;
-    } else if (dateMatch4) {
-      year = parseInt(dateMatch4[1], 10);
-      month = parseInt(dateMatch4[2], 10);
-      day = parseInt(dateMatch4[3], 10);
     }
 
     if (day && month && day >= 1 && day <= 31 && month >= 1 && month <= 12) {
@@ -220,7 +222,7 @@ function extractDateTime(input) {
 }
 
 // ==========================================
-// RENDERERS: DASHBOARD & BUDGET
+// RENDERERS
 // ==========================================
 function renderDashboard() {
   const s = spent();
@@ -281,25 +283,6 @@ function renderDashboard() {
       `).join("")
       : `<div class="muted">No transactions yet.</div>`;
   }
-
-  const weekBudget = 4375;
-  const now = new Date();
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
-  monday.setHours(0, 0, 0, 0);
-
-  const ws = state.transactions
-    .filter(t => new Date((t.date || "1970-01-01") + "T12:00:00") >= monday)
-    .reduce((a, t) => a + Number(t.amount || 0), 0);
-
-  const wl = Math.max(0, weekBudget - ws);
-  if ($("#weekLeft")) $("#weekLeft").textContent = money(wl);
-  if ($("#weekBar")) $("#weekBar").style.width = Math.min(100, (ws / weekBudget) * 100) + "%";
-  if ($("#weekText")) {
-    $("#weekText").textContent = ws <= weekBudget
-      ? `You have ${money(wl)} left in the suggested weekly pace.`
-      : `You are ${money(ws - weekBudget)} over this week's pace.`;
-  }
 }
 
 function options(selected) {
@@ -314,7 +297,7 @@ function options(selected) {
 }
 
 function handleAddCategory() {
-  const name = prompt("Enter new category name (e.g. Health, Subscriptions):");
+  const name = prompt("Enter new category name:");
   if (!name || !name.trim()) return;
 
   const cleanName = name.trim();
@@ -325,15 +308,14 @@ function handleAddCategory() {
     return;
   }
 
-  const icon = prompt(`Enter an icon/emoji for "${cleanName}":`, "🏷️") || "🏷️";
-  const budgetStr = prompt(`Enter monthly budget amount for "${cleanName}" (₹):`, "1000");
-  const budget = Math.max(0, Number(budgetStr) || 0);
+  const icon = prompt(`Enter icon for "${cleanName}":`, "🏷️") || "🏷️";
+  const budgetStr = prompt(`Enter monthly budget amount (₹):`, "1000");
 
   state.categories.push({
     key: key,
     name: cleanName,
     icon: icon.trim(),
-    budget: budget
+    budget: Math.max(0, Number(budgetStr) || 0)
   });
 
   save();
@@ -343,22 +325,16 @@ function deleteCategory(catKey) {
   const categoryToDelete = state.categories.find(c => c.key === catKey);
   if (!categoryToDelete) return;
 
-  const confirmed = confirm(`Are you sure you want to delete "${categoryToDelete.name}"?\nTransactions will be moved to Uncategorized.`);
-  if (!confirmed) return;
+  if (!confirm(`Delete "${categoryToDelete.name}"? Transactions will be uncategorized.`)) return;
 
   state.transactions.forEach(tx => {
-    if (tx.category === catKey) {
-      tx.category = "";
-    }
+    if (tx.category === catKey) tx.category = "";
   });
 
   state.categories = state.categories.filter(c => c.key !== catKey);
   save();
 }
 
-// ==========================================
-// RENDERERS: TRANSACTIONS & KANBAN
-// ==========================================
 function renderTransactions() {
   if (!$("#rows")) return;
 
@@ -388,7 +364,6 @@ function renderTransactions() {
       ${columns.map(col => {
         const colTx = list.filter(t => (col.key === "" ? !t.category : t.category === col.key));
         const colSum = colTx.reduce((a, t) => a + Number(t.amount || 0), 0);
-        const isUncategorized = col.key === "";
         return `
           <div class="kanban-column" data-col-key="${col.key}">
             <div class="kanban-column-header">
@@ -399,19 +374,17 @@ function renderTransactions() {
               </div>
               <div class="kanban-header-right">
                 <span class="kanban-col-sum">${money(colSum)}</span>
-                ${!isUncategorized ? `
-                  <button class="delete-category-btn" data-cat-key="${col.key}" title="Delete Category">×</button>
-                ` : ""}
+                ${col.key !== "" ? `<button class="delete-category-btn" data-cat-key="${col.key}">×</button>` : ""}
               </div>
             </div>
             <div class="kanban-cards-container">
               ${colTx.map(t => `
                 <div class="kanban-card" draggable="true" data-card-id="${t.id}">
                   <div class="kanban-card-top">
-                    <span class="kanban-merchant" title="Click to edit" data-edit="${t.id}">${esc(t.merchant)}</span>
+                    <span class="kanban-merchant" data-edit="${t.id}">${esc(t.merchant)}</span>
                     <div class="kanban-card-actions">
-                      <button class="edit-card-btn" data-edit="${t.id}" title="Edit transaction">✏️</button>
-                      <button class="delete-card-btn" data-del="${t.id}" title="Delete transaction">×</button>
+                      <button class="edit-card-btn" data-edit="${t.id}">✏️</button>
+                      <button class="delete-card-btn" data-del="${t.id}">×</button>
                     </div>
                   </div>
                   <div class="kanban-card-bottom">
@@ -445,14 +418,7 @@ function renderTransactions() {
     };
   });
 
-  $$(".edit-card-btn").forEach(btn => {
-    btn.onclick = (e) => {
-      e.stopPropagation();
-      openModal(btn.dataset.edit);
-    };
-  });
-
-  $$(".kanban-merchant").forEach(el => {
+  $$(".edit-card-btn, .kanban-merchant").forEach(el => {
     el.onclick = (e) => {
       e.stopPropagation();
       openModal(el.dataset.edit);
@@ -470,7 +436,6 @@ function attachKanbanDragListeners() {
     card.addEventListener("dragstart", (e) => {
       card.classList.add("dragging");
       e.dataTransfer.setData("text/plain", card.dataset.cardId);
-      e.dataTransfer.effectAllowed = "move";
     });
 
     card.addEventListener("dragend", () => {
@@ -481,7 +446,6 @@ function attachKanbanDragListeners() {
   columns.forEach(column => {
     column.addEventListener("dragover", (e) => {
       e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
       column.classList.add("drag-over");
     });
 
@@ -529,24 +493,6 @@ function renderBudget() {
       <span>Status</span>
     </div>
     ${rows}
-    <div class="budget-line">
-      <strong>⚪ Uncategorized</strong>
-      <span>—</span>
-      <span>${money(unc().reduce((a, t) => a + Number(t.amount || 0), 0))}</span>
-      <span>Tag manually</span>
-    </div>
-    <div class="budget-line">
-      <strong>Flex / buffer</strong>
-      <span>${money(BUDGET.flex)}</span>
-      <span>—</span>
-      <span>Available buffer</span>
-    </div>
-    <div class="budget-line budget-total">
-      <strong>Variable spending</strong>
-      <span>₹19,000</span>
-      <span>${money(spent())}</span>
-      <span>${spent() <= 19000 ? "Within limit" : "Over limit"}</span>
-    </div>
   `;
 }
 
@@ -589,32 +535,18 @@ function showView(v, updateHash = true) {
   }
 
   window.scrollTo(0, 0);
-  const contentArea = $(".content");
-  if (contentArea) contentArea.scrollTop = 0;
 }
 
 $$(".nav-item").forEach(b => b.onclick = () => showView(b.dataset.view));
 $$("[data-go]").forEach(b => b.onclick = () => showView(b.dataset.go));
 
-window.addEventListener("popstate", () => {
-  showView(getActiveViewFromHash(), false);
-});
-
-const sidebar = $("#sidebar");
-const sidebarToggle = $("#sidebarToggle");
-if (sidebarToggle && sidebar) {
-  sidebarToggle.onclick = () => {
-    sidebar.classList.toggle("collapsed");
-    sidebarToggle.textContent = sidebar.classList.contains("collapsed") ? "»" : "«";
-  };
-}
+window.addEventListener("popstate", () => showView(getActiveViewFromHash(), false));
 
 // ==========================================
-// MODALS & EXPENSE FORM
+// MODALS
 // ==========================================
 if ($("#addExpenseBtn")) $("#addExpenseBtn").onclick = () => openModal();
 if ($("#addCategoryBtn")) $("#addCategoryBtn").onclick = handleAddCategory;
-if ($("#quickAdd")) $("#quickAdd").onclick = () => openModal();
 if ($("#closeModal")) $("#closeModal").onclick = () => $("#modal").classList.add("hidden");
 
 function openModal(editId = null) {
@@ -668,207 +600,35 @@ if ($("#form")) {
 }
 
 // ==========================================
-// FILE SELECTION & UPLOAD HANDLERS
+// FILE HANDLERS
 // ==========================================
 function handleFiles(selectedFiles) {
   files = Array.from(selectedFiles);
   if ($("#previews")) {
-    $("#previews").innerHTML = files.map((f, i) => {
-      const isPdf = f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
-      if (isPdf) {
-        return `
-          <div class="preview pdf-preview" style="display:inline-flex;flex-direction:column;align-items:center;justify-content:center;padding:12px;border:1px solid #ccc;border-radius:8px;background:#f9f9f9;width:120px;height:120px;text-align:center;margin:6px;">
-            <span style="font-size:2.2rem;">📄</span>
-            <span style="font-size:0.75rem;word-break:break-all;margin-top:6px;font-weight:600;color:#333;">${esc(f.name)}</span>
-          </div>
-        `;
-      }
-      return `
-        <div class="preview" style="display:inline-block;margin:6px;">
-          <img src="${URL.createObjectURL(f)}" alt="Screenshot ${i + 1}" style="width:120px;height:120px;object-fit:cover;border-radius:8px;border:1px solid #ccc;">
-        </div>
-      `;
-    }).join("");
+    $("#previews").innerHTML = files.map((f, i) => `
+      <div class="preview" style="display:inline-block;margin:6px;">
+        <span style="font-size:0.8rem;">${esc(f.name)}</span>
+      </div>
+    `).join("");
   }
   if ($("#importBtn")) $("#importBtn").disabled = !files.length;
 }
 
-const dropzoneEl = $("#dropzone") || $(".dropzone");
 const fileInputEl = $("#fileInput");
-const browseBtnEl = $("#browseBtn");
-
-if (dropzoneEl) {
-  dropzoneEl.addEventListener("click", (e) => {
-    if (e.target !== fileInputEl && fileInputEl) {
-      fileInputEl.click();
-    }
-  });
-
-  dropzoneEl.addEventListener("dragover", e => {
-    e.preventDefault();
-    dropzoneEl.classList.add("dragover");
-  });
-
-  dropzoneEl.addEventListener("dragleave", () => {
-    dropzoneEl.classList.remove("dragover");
-  });
-
-  dropzoneEl.addEventListener("drop", e => {
-    e.preventDefault();
-    dropzoneEl.classList.remove("dragover");
-    if (e.dataTransfer.files.length) {
-      handleFiles(e.dataTransfer.files);
-    }
-  });
-}
-
-if (browseBtnEl) {
-  browseBtnEl.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (fileInputEl) fileInputEl.click();
-  });
-}
-
 if (fileInputEl) {
   fileInputEl.addEventListener("change", e => {
-    if (e.target.files && e.target.files.length) {
-      handleFiles(e.target.files);
-    }
+    if (e.target.files && e.target.files.length) handleFiles(e.target.files);
   });
 }
 
 if ($("#importBtn")) $("#importBtn").onclick = runOCR;
 
 // ==========================================
-// PDF STATEMENT PARSER
-// ==========================================
-function median(arr) {
-  if (!arr.length) return 0;
-  const s = [...arr].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 !== 0 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
-}
-
-function buildLines(words) {
-  const usable = (words || [])
-    .filter(w => w.text && w.text.trim())
-    .sort((a, b) => {
-      const ay = (a.bbox.y0 + a.bbox.y1) / 2;
-      const by = (b.bbox.y0 + b.bbox.y1) / 2;
-      return ay - by || a.bbox.x0 - b.bbox.x0;
-    });
-
-  if (!usable.length) return [];
-
-  const heights = usable.map(w => w.bbox.y1 - w.bbox.y0).filter(Boolean);
-  const typicalHeight = Math.max(10, median(heights));
-  const tolerance = typicalHeight * 0.75;
-  const lines = [];
-
-  for (const word of usable) {
-    const cy = (word.bbox.y0 + word.bbox.y1) / 2;
-    let line = null;
-    for (const candidate of lines) {
-      if (Math.abs(candidate.cy - cy) <= tolerance) {
-        line = candidate;
-        break;
-      }
-    }
-    if (!line) {
-      line = { cy, words: [] };
-      lines.push(line);
-    }
-    line.words.push(word);
-    line.cy = line.words.reduce((sum, w) => sum + ((w.bbox.y0 + w.bbox.y1) / 2), 0) / line.words.length;
-  }
-
-  return lines.sort((a, b) => a.cy - b.cy);
-}
-
-async function parsePDFFile(file) {
-  if (typeof pdfjsLib === "undefined") {
-    console.error("PDF.js library missing.");
-    return [];
-  }
-
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  const transactions = [];
-
-  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-    const page = await pdf.getPage(pageNum);
-    const textContent = await page.getTextContent();
-    const viewport = page.getViewport({ scale: 1.0 });
-
-    const items = textContent.items.map(item => {
-      const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
-      return {
-        text: item.str,
-        bbox: {
-          x0: tx[4],
-          y0: tx[5] - item.height,
-          x1: tx[4] + item.width,
-          y1: tx[5]
-        }
-      };
-    });
-
-    const lines = buildLines(items);
-
-    for (const line of lines) {
-      const lineText = line.words.map(w => w.text).join(" ").trim();
-      if (!lineText || !isTransactionSuccessful(lineText)) continue;
-
-      const minusMatch = lineText.match(/(?:^|\s|\|)\s*-\s*([₹RsINRinr]?\s*\d+(?:\.\d{1,2})?)/i) ||
-                         lineText.match(/([₹RsINRinr]?\s*\d+(?:\.\d{1,2})?)\s*(?:Dr|Debit)/i);
-
-      if (!minusMatch) continue;
-
-      const rawAmountNum = parseFloat(minusMatch[1].replace(/[₹RsINRinr,\s]/gi, ""));
-      if (isNaN(rawAmountNum) || rawAmountNum <= 0) continue;
-
-      const dateTime = extractDateTime(line.words);
-
-      let merchant = "";
-      if (lineText.includes("|")) {
-        const parts = lineText.split("|").map(p => p.trim());
-        merchant = parts[0] || "";
-      } else {
-        merchant = lineText
-          .replace(/(?:SUCCESS|FAILED|PENDING|COMPLETED)/gi, "")
-          .replace(/-\s*[₹RsINRinr]?\s*\d+(?:\.\d{1,2})?/gi, "")
-          .replace(/([₹RsINRinr]?\s*\d+(?:\.\d{1,2})?)\s*(?:Dr|Debit)/gi, "")
-          .replace(/\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4}\b/gi, "")
-          .replace(/\b(?:SBI|HDFC|ICICI|AXIS|BOB|PNB|UBI|YES)\s*\d*\b/gi, "")
-          .replace(/\s+/g, " ")
-          .trim();
-      }
-
-      merchant = cleanMerchantName(merchant);
-
-      if (merchant && rawAmountNum) {
-        transactions.push({
-          id: generateId(),
-          merchant: merchant,
-          amount: rawAmountNum,
-          date: dateTime.date,
-          time: dateTime.time,
-          category: "",
-          source: "PDF Statement"
-        });
-      }
-    }
-  }
-
-  return transactions;
-}
-
-// ==========================================
-// REFINED SCREENSHOT OCR PARSER
+// SCREENSHOT OCR PARSER (REFINED)
 // ==========================================
 async function parseImageFile(file) {
   if (typeof Tesseract === "undefined") {
-    alert("Tesseract.js library is missing. Please check your internet connection.");
+    alert("Tesseract.js library missing.");
     return [];
   }
 
@@ -894,58 +654,62 @@ async function parseImageFile(file) {
 
     const totalLines = rawLines.length;
 
-    // 1. FILTER UI HEADER/FOOTER NOISE (History title, top time status like 5:35, filter buttons)
+    // 1. FILTER UI HEADER, STATUS BAR & FOOTER NOISE
     const cleanedLines = rawLines.filter((line, index) => {
       const l = line.toLowerCase().trim();
       if (!l) return false;
 
-      // Ignore top screen status bar & app header noise
+      // Ignore History header and common OCR misreads ("hisory", "histry", "h1story")
+      if (/^h[i1l]st?[o0]r[y1]|hisory|histry|history$/i.test(l)) return false;
+
+      // Ignore top screen status bar & app header elements
       if (index < 3) {
-        if (/^\d{1,2}:\d{2}$/.test(l)) return false; // Status bar clock
-        if (/^\d{1,2}%?$/.test(l)) return false;     // Battery indicator
-        if (["history", "transactions", "payment history", "home", "search", "?"].includes(l)) return false;
+        if (/^\d{1,2}[\.:]\d{2}$/.test(l)) return false; // Clocks like 5:35, 5.35
+        if (/^\d{1,2}%?$/.test(l)) return false;     // Battery status
+        if (["history", "hisory", "histry", "transactions", "payment history", "home", "search", "?"].includes(l)) return false;
       }
 
-      // Ignore bottom navigation & floating filter UI noise
+      // Ignore bottom navigation & floating filter UI buttons
       if (index >= totalLines - 3) {
         if (["filter", "filters", "search", "export", "view details"].includes(l)) return false;
       }
 
-      // Ignore standalone app header words anywhere
-      if (["history", "filter", "filters", "search", "check balance", "view details"].includes(l)) return false;
+      if (["history", "hisory", "histry", "filter", "filters", "search"].includes(l)) return false;
 
       return true;
     });
 
     const transactions = [];
 
-    // 2. SCAN CLEANED LINES FOR TRANSACTION ROWS
+    // 2. PARSE TRANSACTION ROWS & ISOLATE AMOUNT
     for (let i = 0; i < cleanedLines.length; i++) {
       const line = cleanedLines[i];
 
-      // Match amount formats like "-₹25", "-₹138", "-125", "₹100", "-₹ 60"
-      const amtRegex = /(?:^|\s)[-\u2013\u2014\u2212]?\s*[₹RsINRinr\?fF£tT~*§¤\$]?\s*(\d{1,6}(?:\.\d{1,2})?)(?:\s|$)/i;
-      const amtMatch = line.match(amtRegex);
-      const hasAmountSignal = /[-\u2013\u2014\u2212₹RsINRinr\$]/i.test(line) || /\d+\.\d{2}/.test(line);
+      if (/h[i1l]st?[o0]r[y1]|hisory|histry|history/i.test(line)) continue;
 
-      if (amtMatch && hasAmountSignal) {
-        const rawNumStr = amtMatch[1].replace(/,/g, "");
+      // Match explicit negative amounts or currency values (-₹25, -25, -₹138, -125, -165, -340, etc.)
+      const amtRegex = /([-\u2013\u2014\u2212]\s*[₹RsINRinr\?fF£tT~*§¤\$]?\s*(\d+(?:\.\d{1,2})?))|([₹RsINRinr]\s*(\d+(?:\.\d{1,2})?))/i;
+      const amtMatch = line.match(amtRegex);
+
+      if (amtMatch) {
+        const rawNumStr = amtMatch[2] || amtMatch[4] || amtMatch[0].replace(/[^\d.]/g, "");
         const amt = parseFloat(rawNumStr);
 
-        // Filter out valid amounts, skip years or battery % numbers
-        if (!isNaN(amt) && amt > 0 && amt < 1000000 && !(amt >= 1990 && amt <= 2030 && !amtMatch[1].includes("."))) {
+        if (!isNaN(amt) && amt > 0 && amt < 1000000 && !(amt >= 1990 && amt <= 2030 && !rawNumStr.includes("."))) {
           let merchant = "";
 
-          // Option A: Merchant name on the same line before amount (e.g., "Swiggy Instamart -₹138")
-          const parts = line.split(amtMatch[0]);
-          if (parts[0] && parts[0].trim().length >= 2) {
-            const cand = cleanMerchantName(parts[0]);
+          // Extract text preceding the amount match
+          const amtIndex = line.indexOf(amtMatch[0]);
+          const textBeforeAmt = amtIndex > 0 ? line.substring(0, amtIndex) : "";
+
+          if (textBeforeAmt && textBeforeAmt.trim().length >= 2) {
+            const cand = cleanMerchantName(textBeforeAmt);
             if (cand && !isNoiseMerchant(cand)) {
               merchant = cand;
             }
           }
 
-          // Build a surrounding window of lines for Date & Time extraction
+          // Context window for Date & Time
           let windowLines = [];
           for (let w = -2; w <= 2; w++) {
             if (i + w >= 0 && i + w < cleanedLines.length) {
@@ -954,12 +718,12 @@ async function parseImageFile(file) {
           }
           const dateTime = extractDateTime(windowLines.join(" "));
 
-          // Option B: Look at preceding 1-2 lines for merchant name
+          // Fallback to neighboring lines if merchant wasn't on the same line
           if (!merchant) {
             for (let back = 1; back <= 2; back++) {
               if (i - back >= 0) {
                 const prevLine = cleanedLines[i - back];
-                if (isDateTimeLine(prevLine)) continue;
+                if (isDateTimeLine(prevLine) || /h[i1l]st?[o0]r[y1]/i.test(prevLine)) continue;
                 const cand = cleanMerchantName(prevLine);
                 if (cand && cand.length >= 2 && !isNoiseMerchant(cand)) {
                   merchant = cand;
@@ -969,10 +733,9 @@ async function parseImageFile(file) {
             }
           }
 
-          // Option C: Look at next line if merchant wasn't found above
           if (!merchant && i + 1 < cleanedLines.length) {
             const nextLine = cleanedLines[i + 1];
-            if (!isDateTimeLine(nextLine)) {
+            if (!isDateTimeLine(nextLine) && !/h[i1l]st?[o0]r[y1]/i.test(nextLine)) {
               const cand = cleanMerchantName(nextLine);
               if (cand && cand.length >= 2 && !isNoiseMerchant(cand)) {
                 merchant = cand;
@@ -982,7 +745,6 @@ async function parseImageFile(file) {
 
           if (!merchant) merchant = "UPI Payment";
 
-          // Deduplicate transactions within the same image scan
           const isDup = transactions.some(t =>
             Math.abs(t.amount - amt) < 0.01 &&
             t.merchant.toLowerCase() === merchant.toLowerCase() &&
@@ -1004,58 +766,9 @@ async function parseImageFile(file) {
       }
     }
 
-    // 3. FALLBACK FOR SINGLE RECEIPT SCREENSHOTS
-    if (transactions.length === 0) {
-      const allAmounts = [];
-      const globalAmtRegex = /(?:[₹RsINR\-\?fF£tT~*§¤\$]\s*)?([\d,]+(?:\.\d{1,2})?)/gi;
-      let m;
-      while ((m = globalAmtRegex.exec(rawText)) !== null) {
-        const hasSym = /[₹RsINR\-\?fF£tT~*§¤\$]/i.test(m[0]);
-        const val = parseFloat(m[1].replace(/,/g, ""));
-        if (!isNaN(val) && val > 0 && val < 1000000) {
-          if (hasSym || m[1].includes(".")) {
-            if (!(val >= 1990 && val <= 2030 && !m[1].includes("."))) {
-              allAmounts.push(val);
-            }
-          }
-        }
-      }
-
-      if (allAmounts.length > 0) {
-        const primaryAmt = allAmounts[0];
-
-        let singleMerchant = "";
-        const mMatch = rawText.match(/(?:Paid\s+to|Paid\s+at|To|Sent\s+to|Transfer\s+to|Paying|Payment\s+to)[:\s]*(.+)/i);
-        if (mMatch) {
-          singleMerchant = cleanMerchantName(mMatch[1]);
-        }
-
-        if (!singleMerchant) {
-          for (const l of cleanedLines) {
-            const cleanL = cleanMerchantName(l);
-            if (cleanL && cleanL.length >= 2) {
-              singleMerchant = cleanL;
-              break;
-            }
-          }
-        }
-
-        const dateTime = extractDateTime(rawText);
-        transactions.push({
-          id: generateId(),
-          merchant: singleMerchant || "UPI Payment",
-          amount: primaryAmt,
-          date: dateTime.date,
-          time: dateTime.time,
-          category: "",
-          source: "Screenshot OCR"
-        });
-      }
-    }
-
     return transactions;
   } catch (err) {
-    console.error("Image OCR error for", file.name, err);
+    console.error("Image OCR error", err);
     return [];
   }
 }
@@ -1068,62 +781,19 @@ async function runOCR() {
 
   if ($("#importBtn")) $("#importBtn").disabled = true;
   if ($("#ocrProgressWrap")) $("#ocrProgressWrap").classList.remove("hidden");
-  if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Processing files…";
-  if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = "0%";
 
   let added = 0;
   let skipped = 0;
 
-  const pdfFiles = files.filter(f => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"));
-  const imageFiles = files.filter(f => 
-    f.type.startsWith("image/") || 
-    /\.(png|jpe?g|webp|gif|bmp|heic|tiff?)$/i.test(f.name) || 
-    (!f.type.includes("pdf") && !f.name.toLowerCase().endsWith(".pdf"))
-  );
-
-  const totalFiles = pdfFiles.length + imageFiles.length;
-  let processed = 0;
-
   try {
-    // Process PDF statements
-    for (let i = 0; i < pdfFiles.length; i++) {
-      processed++;
-      if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Parsing PDF statement ${i + 1} of ${pdfFiles.length}…`;
-      if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = `${Math.round((processed / totalFiles) * 100)}%`;
-
-      const pdfTx = await parsePDFFile(pdfFiles[i]);
-      for (const transaction of pdfTx) {
-        const duplicate = state.transactions.some(
-          existing =>
-            existing.date === transaction.date &&
-            Math.abs(Number(existing.amount) - Number(transaction.amount)) < 0.01 &&
-            String(existing.merchant).toLowerCase() === String(transaction.merchant).toLowerCase() &&
-            (existing.time && transaction.time ? existing.time === transaction.time : true)
-        );
-
-        if (duplicate) {
-          skipped++;
-        } else {
-          state.transactions.push(transaction);
-          added++;
-        }
-      }
-    }
-
-    // Process Screenshot images
-    for (let i = 0; i < imageFiles.length; i++) {
-      processed++;
-      if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Scanning screenshot ${i + 1} of ${imageFiles.length}…`;
-      if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = `${Math.round((processed / totalFiles) * 100)}%`;
-
-      const imgTx = await parseImageFile(imageFiles[i]);
+    for (let i = 0; i < files.length; i++) {
+      const imgTx = await parseImageFile(files[i]);
       for (const transaction of imgTx) {
         const duplicate = state.transactions.some(
           existing =>
             existing.date === transaction.date &&
             Math.abs(Number(existing.amount) - Number(transaction.amount)) < 0.01 &&
-            String(existing.merchant).toLowerCase() === String(transaction.merchant).toLowerCase() &&
-            (existing.time && transaction.time ? existing.time === transaction.time : true)
+            String(existing.merchant).toLowerCase() === String(transaction.merchant).toLowerCase()
         );
 
         if (duplicate) {
@@ -1138,22 +808,16 @@ async function runOCR() {
     files = [];
     if ($("#fileInput")) $("#fileInput").value = "";
     if ($("#previews")) $("#previews").innerHTML = "";
-    if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = "100%";
-    if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `${added} transaction${added === 1 ? "" : "s"} imported`;
 
     save();
     showView("transactions");
-    if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Ready";
-    alert(`${added} transaction${added === 1 ? "" : "s"} imported${skipped ? `; ${skipped} duplicate entry${skipped === 1 ? "" : "ies"} excluded` : ""}.`);
+    alert(`${added} transaction${added === 1 ? "" : "s"} imported successfully.`);
   } catch (error) {
     console.error("Import error:", error);
-    if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Error processing file";
-    alert("An error occurred while reading the files.");
+    alert("An error occurred while reading the screenshot.");
   } finally {
     if ($("#importBtn")) $("#importBtn").disabled = !files.length;
-    setTimeout(() => {
-      if ($("#ocrProgressWrap")) $("#ocrProgressWrap").classList.add("hidden");
-    }, 1000);
+    if ($("#ocrProgressWrap")) $("#ocrProgressWrap").classList.add("hidden");
   }
 }
 
