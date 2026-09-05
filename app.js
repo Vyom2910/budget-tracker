@@ -424,21 +424,39 @@ function renderAll() {
   if ($("#uncatCount")) $("#uncatCount").textContent = n || "";
 }
 
-function showView(v) {
-  $$(".view").forEach(x => x.classList.toggle("active", x.id === v));
-  $$(".nav-item").forEach(x => x.classList.toggle("active", x.dataset.view === v));
+const VALID_VIEWS = ["dashboard", "transactions", "upload", "budget"];
+
+function getActiveViewFromHash() {
+  const hash = window.location.hash.replace("#", "").trim();
+  return VALID_VIEWS.includes(hash) ? hash : "dashboard";
+}
+
+function showView(v, updateHash = true) {
+  const targetView = VALID_VIEWS.includes(v) ? v : "dashboard";
+
+  $$(".view").forEach(x => x.classList.toggle("active", x.id === targetView));
+  $$(".nav-item").forEach(x => x.classList.toggle("active", x.dataset.view === targetView));
+
   if ($("#pageTitle")) {
     $("#pageTitle").textContent = {
       dashboard: "Dashboard",
       transactions: "Transactions",
       upload: "Upload screenshot",
       budget: "Budget"
-    }[v];
+    }[targetView];
+  }
+
+  if (updateHash && window.location.hash !== `#${targetView}`) {
+    window.location.hash = targetView;
   }
 }
 
 $$(".nav-item").forEach(b => b.onclick = () => showView(b.dataset.view));
 $$("[data-go]").forEach(b => b.onclick = () => showView(b.dataset.go));
+
+window.addEventListener("hashchange", () => {
+  showView(getActiveViewFromHash(), false);
+});
 
 const sidebar = $("#sidebar");
 const sidebarToggle = $("#sidebarToggle");
@@ -911,3 +929,4 @@ async function runOCR() {
 }
 
 renderAll();
+showView(getActiveViewFromHash(), true);
