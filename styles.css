@@ -320,7 +320,7 @@ nav {
   font-size: 0.85rem;
 }
 
-/* --- Notion-style Kanban Board --- */
+/* Kanban Board Styling */
 .transactions-summary-bar {
   display: flex;
   justify-content: space-between;
@@ -440,7 +440,7 @@ nav {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .kanban-merchant {
@@ -449,6 +449,34 @@ nav {
   color: #f0f0f0;
   line-height: 1.2;
   word-break: break-word;
+  cursor: pointer;
+}
+
+.kanban-merchant:hover {
+  color: #91b66a;
+  text-decoration: underline;
+}
+
+.kanban-card-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.edit-card-btn {
+  background: transparent;
+  border: none;
+  font-size: 0.8rem;
+  cursor: pointer;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0.7;
+}
+
+.edit-card-btn:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .delete-card-btn {
@@ -465,6 +493,26 @@ nav {
 .delete-card-btn:hover {
   color: #df7777;
   background: rgba(223, 119, 119, 0.1);
+}
+
+.kanban-card-middle {
+  margin: 6px 0;
+}
+
+.kanban-cat-select {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #c0c8d0;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.kanban-cat-select:focus {
+  outline: none;
+  border-color: #91b66a;
 }
 
 .kanban-card-bottom {

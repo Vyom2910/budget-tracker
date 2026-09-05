@@ -17,10 +17,18 @@ const BUDGET = {
 const KEY = "budgetos_simple_ocr";
 let state = JSON.parse(localStorage.getItem(KEY) || "null") || { transactions: [] };
 let files = [];
+let editingId = null;
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const money = n => "₹" + Math.round(Number(n) || 0).toLocaleString("en-IN");
+
+function generateId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "tx_" + Date.now().toString(36) + "_" + Math.random().toString(36).substring(2, 8);
+}
 
 function save() {
   localStorage.setItem(KEY, JSON.stringify(state));
@@ -156,7 +164,7 @@ function renderDashboard() {
 
 function options(selected) {
   return `
-    <option value="">Uncategorized</option>
+    <option value="" ${!selected ? "selected" : ""}>Uncategorized</option>
     ${BUDGET.categories.map(c => `
       <option value="${c.key}" ${selected === c.key ? "selected" : ""}>
         ${c.icon} ${c.name}
@@ -208,8 +216,16 @@ function renderTransactions() {
               ${colTx.map(t => `
                 <div class="kanban-card" draggable="true" data-card-id="${t.id}">
                   <div class="kanban-card-top">
-                    <span class="kanban-merchant">${esc(t.merchant)}</span>
-                    <button class="delete-card-btn" data-del="${t.id}">×</button>
+                    <span class="kanban-merchant" title="Click to edit" data-edit="${t.id}">${esc(t.merchant)}</span>
+                    <div class="kanban-card-actions">
+                      <button class="edit-card-btn" data-edit="${t.id}" title="Edit transaction">✏️</button>
+                      <button class="delete-card-btn" data-del="${t.id}" title="Delete transaction">×</button>
+                    </div>
+                  </div>
+                  <div class="kanban-card-middle">
+                    <select class="kanban-cat-select" data-id="${t.id}">
+                      ${options(t.category || "")}
+                    </select>
                   </div>
                   <div class="kanban-card-bottom">
                     <span class="kanban-date">${fmtDate(t.date)}${t.time ? ` • ${esc(t.time)}` : ""}</span>
@@ -232,6 +248,32 @@ function renderTransactions() {
       e.stopPropagation();
       state.transactions = state.transactions.filter(t => t.id !== btn.dataset.del);
       save();
+    };
+  });
+
+  $$(".edit-card-btn").forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      openModal(btn.dataset.edit);
+    };
+  });
+
+  $$(".kanban-merchant").forEach(el => {
+    el.onclick = (e) => {
+      e.stopPropagation();
+      openModal(el.dataset.edit);
+    };
+  });
+
+  $$(".kanban-cat-select").forEach(select => {
+    select.onchange = (e) => {
+      e.stopPropagation();
+      const id = select.dataset.id;
+      const t = state.transactions.find(x => x.id === id);
+      if (t) {
+        t.category = select.value;
+        save();
+      }
     };
   });
 
@@ -261,8 +303,10 @@ function attachKanbanDragListeners() {
       column.classList.add("drag-over");
     });
 
-    column.addEventListener("dragleave", () => {
-      column.classList.remove("drag-over");
+    column.addEventListener("dragleave", (e) => {
+      if (!column.contains(e.relatedTarget)) {
+        column.classList.remove("drag-over");
+      }
     });
 
     column.addEventListener("drop", (e) => {
@@ -350,30 +394,53 @@ $$(".nav-item").forEach(b => b.onclick = () => showView(b.dataset.view));
 $$("[data-go]").forEach(b => b.onclick = () => showView(b.dataset.go));
 
 if ($("#quickAdd")) $("#quickAdd").onclick = () => openModal();
-if ($("#addBtn")) $("#addBtn").onclick = () => openModal();
 if ($("#closeModal")) $("#closeModal").onclick = () => $("#modal").classList.add("hidden");
-if ($("#mCategory")) $("#mCategory").innerHTML = options("");
 
-function openModal() {
-  if ($("#mDate")) $("#mDate").value = new Date().toISOString().slice(0, 10);
-  if ($("#mMerchant")) $("#mMerchant").value = "";
-  if ($("#mAmount")) $("#mAmount").value = "";
-  if ($("#mCategory")) $("#mCategory").value = "";
+function openModal(editId = null) {
+  if (editId) {
+    editingId = editId;
+    const t = state.transactions.find(x => x.id === editId);
+    if (t) {
+      if ($("#modalTitle")) $("#modalTitle").textContent = "Edit Expense";
+      if ($("#mDate")) $("#mDate").value = t.date || new Date().toISOString().slice(0, 10);
+      if ($("#mMerchant")) $("#mMerchant").value = t.merchant || "";
+      if ($("#mAmount")) $("#mAmount").value = t.amount || "";
+      if ($("#mCategory")) $("#mCategory").innerHTML = options(t.category || "");
+    }
+  } else {
+    editingId = null;
+    if ($("#modalTitle")) $("#modalTitle").textContent = "Add Expense";
+    if ($("#mDate")) $("#mDate").value = new Date().toISOString().slice(0, 10);
+    if ($("#mMerchant")) $("#mMerchant").value = "";
+    if ($("#mAmount")) $("#mAmount").value = "";
+    if ($("#mCategory")) $("#mCategory").innerHTML = options("");
+  }
   if ($("#modal")) $("#modal").classList.remove("hidden");
 }
 
 if ($("#form")) {
   $("#form").onsubmit = e => {
     e.preventDefault();
-    state.transactions.push({
-      id: crypto.randomUUID(),
-      date: $("#mDate").value,
-      merchant: $("#mMerchant").value.trim(),
-      amount: +$("#mAmount").value,
-      category: $("#mCategory").value,
-      time: "",
-      source: "Manual"
-    });
+    if (editingId) {
+      const t = state.transactions.find(x => x.id === editingId);
+      if (t) {
+        t.date = $("#mDate").value;
+        t.merchant = $("#mMerchant").value.trim();
+        t.amount = +$("#mAmount").value;
+        t.category = $("#mCategory").value;
+      }
+    } else {
+      state.transactions.push({
+        id: generateId(),
+        date: $("#mDate").value,
+        merchant: $("#mMerchant").value.trim(),
+        amount: +$("#mAmount").value,
+        category: $("#mCategory").value,
+        time: "",
+        source: "Manual"
+      });
+    }
+    editingId = null;
     if ($("#modal")) $("#modal").classList.add("hidden");
     save();
   };
@@ -638,7 +705,7 @@ function extractRows(data) {
     const dateTime = extractDateTime(regionWords);
 
     results.push({
-      id: crypto.randomUUID(),
+      id: generateId(),
       merchant: merchant || "Unidentified transaction",
       amount: current.amount,
       date: dateTime.date,
