@@ -116,25 +116,41 @@ function esc(s) {
   }[m]));
 }
 
+function isNoiseMerchant(str) {
+  const l = String(str || "").toLowerCase().trim();
+  if (!l || l.length < 2) return true;
+  const noiseWords = [
+    "history", "filter", "filters", "search", "check balance", "view details",
+    "successful", "completed", "payment history", "transaction history",
+    "home", "help", "support", "today", "yesterday", "paid to", "sent to"
+  ];
+  if (noiseWords.includes(l)) return true;
+  if (/^\d{1,2}:\d{2}/.test(l)) return true;
+  if (/^\d+$/.test(l)) return true;
+  return false;
+}
+
+function isDateTimeLine(str) {
+  if (!str) return false;
+  return /\b\d{1,2}:\d{2}\s*(?:AM|PM)?\b/i.test(str) ||
+         /\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b/i.test(str) ||
+         /\b(?:Today|Yesterday)\b/i.test(str);
+}
+
 function cleanMerchantName(str) {
   if (!str) return "";
   let clean = str
     .replace(/^(Paid\s+to|Paid\s+at|Sent\s+to|Payment\s+to|Paying|To|Transfer\s+to)[:\s]*/i, "")
     .replace(/(?:SUCCESSFUL|SUCCESS|COMPLETED|PAID|FAILED|PENDING|DEBITED|CREDITED|UPI\s*ID|REF|TXN|ORDER|UTR|IMPS|NEFT).*/gi, "")
-    .replace(/[\?₹fF£tT~*§¤]/g, "")
+    .replace(/[\?₹fF£tT~*§¤\$]/g, "")
     .replace(/[^\w\s&.-]/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  const lower = clean.toLowerCase();
-  if (!clean || clean.length < 2) return "";
-  if (["transaction history", "payment history", "payment details", "transaction details", "history", "home", "search", "filter"].includes(lower)) {
-    return "";
-  }
+  if (isNoiseMerchant(clean)) return "";
   return clean;
 }
 
-// Extract dates & time reliably across screenshots and PDF text
 function extractDateTime(input) {
   let date = "";
   let time = "";
@@ -848,7 +864,7 @@ async function parsePDFFile(file) {
 }
 
 // ==========================================
-// SCREENSHOT OCR PARSER (LISTS & SINGLE RECEIPTS)
+// REFINED SCREENSHOT OCR PARSER
 // ==========================================
 async function parseImageFile(file) {
   if (typeof Tesseract === "undefined") {
@@ -876,99 +892,125 @@ async function parseImageFile(file) {
       rawLines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     }
 
-    const transactions = [];
+    const totalLines = rawLines.length;
 
-    const isNoise = (str) => {
-      const l = str.toLowerCase().trim();
-      if (!l) return true;
-      if (["history", "filter", "search", "payment history", "transaction history", "check balance", "view details", "successful", "completed"].includes(l)) return true;
-      if (/^\d{1,2}:\d{2}(\s*(am|pm))?$/i.test(l)) return true;
-      if (/^\d{1,3}%$/.test(l)) return true;
-      return false;
-    };
+    // 1. FILTER UI HEADER/FOOTER NOISE (History title, top time status like 5:35, filter buttons)
+    const cleanedLines = rawLines.filter((line, index) => {
+      const l = line.toLowerCase().trim();
+      if (!l) return false;
 
-    // 1. SCAN LINE-BY-LINE FOR LIST SCREENSHOTS (GPay / PhonePe / Cred / Paytm lists)
-    for (let i = 0; i < rawLines.length; i++) {
-      const line = rawLines[i];
-      if (isNoise(line)) continue;
-
-      // Extract amount candidate (supports ₹150, Rs.150, -150, 150.00, etc.)
-      const amtMatch = line.match(/(?:[₹RsINR\-\?fF£tT~*§¤]\s*)?([\d,]+(?:\.\d{1,2})?)/i);
-      if (!amtMatch) continue;
-
-      const hasSymbol = /[₹RsINR\-\?fF£tT~*§¤]/i.test(line);
-      const hasDecimal = /\d+\.\d{2}/.test(line);
-
-      const rawNumStr = amtMatch[1].replace(/,/g, "");
-      const amt = parseFloat(rawNumStr);
-
-      if (isNaN(amt) || amt <= 0 || amt > 1000000) continue;
-      if (!hasSymbol && !hasDecimal && (amt >= 1990 && amt <= 2030)) continue; // Skip years
-      if (!hasSymbol && !hasDecimal && amt > 10000) continue; // Skip mobile or order IDs
-
-      let merchant = "";
-
-      // Check text on the same line before the amount
-      const parts = line.split(amtMatch[0]);
-      if (parts[0] && parts[0].trim().length >= 2) {
-        merchant = cleanMerchantName(parts[0]);
+      // Ignore top screen status bar & app header noise
+      if (index < 3) {
+        if (/^\d{1,2}:\d{2}$/.test(l)) return false; // Status bar clock
+        if (/^\d{1,2}%?$/.test(l)) return false;     // Battery indicator
+        if (["history", "transactions", "payment history", "home", "search", "?"].includes(l)) return false;
       }
 
-      // Check preceding lines if missing
-      if (!merchant) {
-        for (let back = 1; back <= 3; back++) {
-          if (i - back >= 0) {
-            const prevLine = rawLines[i - back];
-            if (isNoise(prevLine)) continue;
-            const cand = cleanMerchantName(prevLine);
-            if (cand && cand.length >= 2) {
+      // Ignore bottom navigation & floating filter UI noise
+      if (index >= totalLines - 3) {
+        if (["filter", "filters", "search", "export", "view details"].includes(l)) return false;
+      }
+
+      // Ignore standalone app header words anywhere
+      if (["history", "filter", "filters", "search", "check balance", "view details"].includes(l)) return false;
+
+      return true;
+    });
+
+    const transactions = [];
+
+    // 2. SCAN CLEANED LINES FOR TRANSACTION ROWS
+    for (let i = 0; i < cleanedLines.length; i++) {
+      const line = cleanedLines[i];
+
+      // Match amount formats like "-₹25", "-₹138", "-125", "₹100", "-₹ 60"
+      const amtRegex = /(?:^|\s)[-\u2013\u2014\u2212]?\s*[₹RsINRinr\?fF£tT~*§¤\$]?\s*(\d{1,6}(?:\.\d{1,2})?)(?:\s|$)/i;
+      const amtMatch = line.match(amtRegex);
+      const hasAmountSignal = /[-\u2013\u2014\u2212₹RsINRinr\$]/i.test(line) || /\d+\.\d{2}/.test(line);
+
+      if (amtMatch && hasAmountSignal) {
+        const rawNumStr = amtMatch[1].replace(/,/g, "");
+        const amt = parseFloat(rawNumStr);
+
+        // Filter out valid amounts, skip years or battery % numbers
+        if (!isNaN(amt) && amt > 0 && amt < 1000000 && !(amt >= 1990 && amt <= 2030 && !amtMatch[1].includes("."))) {
+          let merchant = "";
+
+          // Option A: Merchant name on the same line before amount (e.g., "Swiggy Instamart -₹138")
+          const parts = line.split(amtMatch[0]);
+          if (parts[0] && parts[0].trim().length >= 2) {
+            const cand = cleanMerchantName(parts[0]);
+            if (cand && !isNoiseMerchant(cand)) {
               merchant = cand;
-              break;
             }
+          }
+
+          // Build a surrounding window of lines for Date & Time extraction
+          let windowLines = [];
+          for (let w = -2; w <= 2; w++) {
+            if (i + w >= 0 && i + w < cleanedLines.length) {
+              windowLines.push(cleanedLines[i + w]);
+            }
+          }
+          const dateTime = extractDateTime(windowLines.join(" "));
+
+          // Option B: Look at preceding 1-2 lines for merchant name
+          if (!merchant) {
+            for (let back = 1; back <= 2; back++) {
+              if (i - back >= 0) {
+                const prevLine = cleanedLines[i - back];
+                if (isDateTimeLine(prevLine)) continue;
+                const cand = cleanMerchantName(prevLine);
+                if (cand && cand.length >= 2 && !isNoiseMerchant(cand)) {
+                  merchant = cand;
+                  break;
+                }
+              }
+            }
+          }
+
+          // Option C: Look at next line if merchant wasn't found above
+          if (!merchant && i + 1 < cleanedLines.length) {
+            const nextLine = cleanedLines[i + 1];
+            if (!isDateTimeLine(nextLine)) {
+              const cand = cleanMerchantName(nextLine);
+              if (cand && cand.length >= 2 && !isNoiseMerchant(cand)) {
+                merchant = cand;
+              }
+            }
+          }
+
+          if (!merchant) merchant = "UPI Payment";
+
+          // Deduplicate transactions within the same image scan
+          const isDup = transactions.some(t =>
+            Math.abs(t.amount - amt) < 0.01 &&
+            t.merchant.toLowerCase() === merchant.toLowerCase() &&
+            t.date === dateTime.date
+          );
+
+          if (!isDup) {
+            transactions.push({
+              id: generateId(),
+              merchant: merchant,
+              amount: amt,
+              date: dateTime.date,
+              time: dateTime.time,
+              category: "",
+              source: "Screenshot OCR"
+            });
           }
         }
       }
-
-      // Check next line if still missing
-      if (!merchant && i + 1 < rawLines.length) {
-        const nextLine = rawLines[i + 1];
-        if (!isNoise(nextLine)) {
-          merchant = cleanMerchantName(nextLine);
-        }
-      }
-
-      if (!merchant) merchant = "UPI Payment";
-
-      // Context window for date and time
-      let windowText = "";
-      for (let w = -2; w <= 2; w++) {
-        if (i + w >= 0 && i + w < rawLines.length) {
-          windowText += " " + rawLines[i + w];
-        }
-      }
-      const dateTime = extractDateTime(windowText);
-
-      const isDup = transactions.some(t => Math.abs(t.amount - amt) < 0.01 && t.merchant === merchant && t.date === dateTime.date);
-      if (!isDup && (hasSymbol || hasDecimal || merchant !== "UPI Payment")) {
-        transactions.push({
-          id: generateId(),
-          merchant: merchant,
-          amount: amt,
-          date: dateTime.date,
-          time: dateTime.time,
-          category: "",
-          source: "Screenshot OCR"
-        });
-      }
     }
 
-    // 2. FALLBACK FOR SINGLE RECEIPT SCREENSHOTS
+    // 3. FALLBACK FOR SINGLE RECEIPT SCREENSHOTS
     if (transactions.length === 0) {
       const allAmounts = [];
-      const globalAmtRegex = /(?:[₹RsINR\-\?fF£tT~*§¤]\s*)?([\d,]+(?:\.\d{1,2})?)/gi;
+      const globalAmtRegex = /(?:[₹RsINR\-\?fF£tT~*§¤\$]\s*)?([\d,]+(?:\.\d{1,2})?)/gi;
       let m;
       while ((m = globalAmtRegex.exec(rawText)) !== null) {
-        const hasSym = /[₹RsINR\-\?fF£tT~*§¤]/i.test(m[0]);
+        const hasSym = /[₹RsINR\-\?fF£tT~*§¤\$]/i.test(m[0]);
         const val = parseFloat(m[1].replace(/,/g, ""));
         if (!isNaN(val) && val > 0 && val < 1000000) {
           if (hasSym || m[1].includes(".")) {
@@ -989,8 +1031,7 @@ async function parseImageFile(file) {
         }
 
         if (!singleMerchant) {
-          for (const l of rawLines) {
-            if (isNoise(l)) continue;
+          for (const l of cleanedLines) {
             const cleanL = cleanMerchantName(l);
             if (cleanL && cleanL.length >= 2) {
               singleMerchant = cleanL;
