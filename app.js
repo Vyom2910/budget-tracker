@@ -30,20 +30,16 @@ let state = {
 let files = [];
 let editingId = null;
 
-// Configure PDF.js Worker if available
 if (typeof pdfjsLib !== "undefined") {
   pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 }
 
-// Transaction Status Guardrails
 const FAILED_STATUS_KEYWORDS = [
   "failed",
   "declined",
   "unsuccessful",
   "cancelled",
   "canceled",
-  "pending",
-  "processing",
   "expired",
   "rejected",
   "reversed"
@@ -54,7 +50,7 @@ function isTransactionSuccessful(textBlock) {
   if (FAILED_STATUS_KEYWORDS.some(keyword => lower.includes(keyword))) {
     return false;
   }
-  return lower.includes("success") || lower.includes("paid") || lower.includes("completed");
+  return true;
 }
 
 // ==========================================
@@ -99,11 +95,11 @@ function dateValue(t) {
 }
 
 function time24(x) {
-  const m = String(x).match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  const m = String(x).match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
   if (!m) return "00:00";
   let h = +m[1];
-  if (m[3].toUpperCase() === "PM" && h !== 12) h += 12;
-  if (m[3].toUpperCase() === "AM" && h === 12) h = 0;
+  if (m[3] && m[3].toUpperCase() === "PM" && h !== 12) h += 12;
+  if (m[3] && m[3].toUpperCase() === "AM" && h === 12) h = 0;
   return String(h).padStart(2, "0") + ":" + m[2];
 }
 
@@ -247,7 +243,7 @@ function deleteCategory(catKey) {
   const categoryToDelete = state.categories.find(c => c.key === catKey);
   if (!categoryToDelete) return;
 
-  const confirmed = confirm(`Are you sure you want to delete the "${categoryToDelete.name}" category?\nTransactions in this category will be moved to Uncategorized.`);
+  const confirmed = confirm(`Are you sure you want to delete "${categoryToDelete.name}"?\nTransactions will be moved to Uncategorized.`);
   if (!confirmed) return;
 
   state.transactions.forEach(tx => {
@@ -689,10 +685,14 @@ function buildLines(words) {
   return lines.sort((a, b) => a.cy - b.cy);
 }
 
-function extractDateTime(words) {
+function extractDateTime(input) {
   let date = "";
   let time = "";
-  const rawText = Array.isArray(words) ? words.map(w => w.text || w).join(" ") : String(words);
+
+  const rawText = Array.isArray(input)
+    ? input.map(w => (typeof w === "object" ? w.text || "" : String(w))).join(" ")
+    : String(input || "");
+
   const cleanText = rawText.replace(/[,;]/g, " ");
 
   const timeMatch = cleanText.match(/\b(\d{1,2}:\d{2}\s*(?:AM|PM)?)\b/i);
@@ -817,34 +817,63 @@ async function parsePDFFile(file) {
 // 2. Screenshot Image OCR Parser
 async function parseImageFile(file) {
   if (typeof Tesseract === "undefined") {
-    console.error("Tesseract.js library is missing.");
+    alert("Tesseract.js library is missing or failed to load. Please check your internet script tag.");
     return [];
   }
 
+  let imgUrl = null;
   try {
-    const result = await Tesseract.recognize(file, "eng");
-    const text = result?.data?.text || "";
-    
-    if (FAILED_STATUS_KEYWORDS.some(kw => text.toLowerCase().includes(kw))) {
+    imgUrl = URL.createObjectURL(file);
+
+    const result = await Tesseract.recognize(imgUrl, "eng");
+    const rawText = result?.data?.text || "";
+
+    if (!rawText.trim()) return [];
+
+    if (FAILED_STATUS_KEYWORDS.some(kw => rawText.toLowerCase().includes(kw))) {
       return [];
     }
 
-    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    const dateTime = extractDateTime(lines);
+    const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
+    // 1. EXTRACT AMOUNT (Prioritize currency symbol matches to prevent reading date digits)
     let amount = 0;
-    const amountMatches = [...text.matchAll(/(?:₹|Rs\.?|INR)?\s*(\d+(?:\.\d{1,2})?)/gi)];
-    for (const m of amountMatches) {
-      const val = parseFloat(m[1]);
-      if (val > 0 && val < 500000) {
-        amount = val;
-        break;
+    const currencyMatch = rawText.match(/(?:₹|Rs\.?|INR)\s*([\d,]+(?:\.\d{1,2})?)/i);
+    if (currencyMatch) {
+      amount = parseFloat(currencyMatch[1].replace(/,/g, ""));
+    }
+
+    if (!amount || isNaN(amount)) {
+      const keywordMatch = rawText.match(/(?:Paid|Amount|Total|Debited|Sent|INR|Rs)\s*(?:of|for)?\s*₹?\s*([\d,]+(?:\.\d{1,2})?)/i);
+      if (keywordMatch) {
+        amount = parseFloat(keywordMatch[1].replace(/,/g, ""));
       }
     }
 
+    if (!amount || isNaN(amount)) {
+      for (const line of lines) {
+        if (/\b(?:202[0-9]|19[0-9]{2})\b/.test(line)) continue;
+        if (/\b\d{1,2}:\d{2}\b/.test(line)) continue;
+        if (/\d{10,}/.test(line)) continue;
+
+        const m = line.match(/\b([\d,]+(?:\.\d{2}))\b/);
+        if (m) {
+          const parsed = parseFloat(m[1].replace(/,/g, ""));
+          if (parsed > 0 && parsed < 500000) {
+            amount = parsed;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!amount || isNaN(amount) || amount <= 0) return [];
+
+    // 2. EXTRACT MERCHANT
     let merchant = "";
+
     for (const line of lines) {
-      const mMatch = line.match(/(?:Paid to|To|Sent to|Transfer to)\s+(.+)/i);
+      const mMatch = line.match(/(?:Paid to|To|Sent to|Transfer to|Paying|Transferred to|Payment to)\s+(.+)/i);
       if (mMatch) {
         merchant = mMatch[1].trim();
         break;
@@ -852,27 +881,50 @@ async function parseImageFile(file) {
     }
 
     if (!merchant) {
-      for (const line of lines) {
-        if (!/^(Paid|Success|Completed|Failed|Payment|Debit|Credit|₹|Rs|\d{1,2}:|\d{1,2}\s+[A-Za-z]+)/i.test(line) && line.length > 2) {
-          merchant = line;
+      for (let i = 0; i < lines.length; i++) {
+        if (/^(Paid to|To|Sent to|Transfer to|Paying)$/i.test(lines[i]) && lines[i + 1]) {
+          merchant = lines[i + 1].trim();
           break;
         }
       }
     }
 
-    if (merchant && amount > 0) {
-      return [{
-        id: generateId(),
-        merchant: merchant.replace(/[^\w\s&.-]/gi, "").trim() || "UPI Payment",
-        amount: amount,
-        date: dateTime.date,
-        time: dateTime.time,
-        category: "",
-        source: "Screenshot OCR"
-      }];
+    if (!merchant) {
+      const ignoreRegex = /^(Paid|Success|Completed|Successful|Payment|Debit|Credit|₹|Rs|INR|To|From|Bank|UPI|Txn|Ref|GPay|PhonePe|Paytm|Google Pay|Date|Time|\d+)/i;
+      for (const line of lines) {
+        const cleanLine = line.replace(/[^\w\s&.-]/gi, "").trim();
+        if (cleanLine.length >= 3 && !ignoreRegex.test(cleanLine)) {
+          merchant = cleanLine;
+          break;
+        }
+      }
     }
+
+    merchant = merchant
+      .replace(/(?:SUCCESS|COMPLETED|PAID|SUCCESSFUL|UPI ID|REF|TXN).*/gi, "")
+      .replace(/[^\w\s&.-]/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!merchant) merchant = "UPI Payment";
+
+    // 3. EXTRACT DATE & TIME
+    const dateTime = extractDateTime(rawText);
+
+    return [{
+      id: generateId(),
+      merchant: merchant,
+      amount: amount,
+      date: dateTime.date,
+      time: dateTime.time,
+      category: "",
+      source: "Screenshot OCR"
+    }];
+
   } catch (err) {
-    console.error("Image OCR error:", err);
+    console.error("Image OCR error for", file.name, err);
+  } finally {
+    if (imgUrl) URL.revokeObjectURL(imgUrl);
   }
 
   return [];
@@ -897,7 +949,6 @@ async function runOCR() {
   let processed = 0;
 
   try {
-    // Process PDF statements
     for (let i = 0; i < pdfFiles.length; i++) {
       processed++;
       if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Parsing PDF statement ${i + 1} of ${pdfFiles.length}…`;
@@ -908,7 +959,7 @@ async function runOCR() {
         const duplicate = state.transactions.some(
           existing =>
             existing.date === transaction.date &&
-            Number(existing.amount) === Number(transaction.amount) &&
+            Math.abs(Number(existing.amount) - Number(transaction.amount)) < 0.01 &&
             String(existing.merchant).toLowerCase() === String(transaction.merchant).toLowerCase()
         );
 
@@ -921,7 +972,6 @@ async function runOCR() {
       }
     }
 
-    // Process Screenshot Images
     for (let i = 0; i < imageFiles.length; i++) {
       processed++;
       if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Scanning screenshot ${i + 1} of ${imageFiles.length}…`;
@@ -932,7 +982,7 @@ async function runOCR() {
         const duplicate = state.transactions.some(
           existing =>
             existing.date === transaction.date &&
-            Number(existing.amount) === Number(transaction.amount) &&
+            Math.abs(Number(existing.amount) - Number(transaction.amount)) < 0.01 &&
             String(existing.merchant).toLowerCase() === String(transaction.merchant).toLowerCase()
         );
 
