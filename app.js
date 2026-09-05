@@ -79,52 +79,60 @@ function renderDashboard() {
   const actual = BUDGET.income - BUDGET.pg - s;
   const rem = Math.max(0, 19000 - s);
 
-  $("#totalSpent").textContent = money(s);
-  $("#spendRemaining").textContent = money(rem);
-  $("#actualSavings").textContent = money(actual);
+  if ($("#totalSpent")) $("#totalSpent").textContent = money(s);
+  if ($("#spendRemaining")) $("#spendRemaining").textContent = money(rem);
+  if ($("#actualSavings")) $("#actualSavings").textContent = money(actual);
 
   const p = Math.max(0, Math.min(100, (actual / BUDGET.savings) * 100));
 
-  $("#saveBar").style.width = p + "%";
-  $("#saveStatus").textContent = actual >= BUDGET.savings ? "ON TRACK" : "BEHIND";
-  $("#saveStatus").style.color = actual >= BUDGET.savings ? "#91b66a" : "#df7777";
+  if ($("#saveBar")) $("#saveBar").style.width = p + "%";
+  if ($("#saveStatus")) {
+    $("#saveStatus").textContent = actual >= BUDGET.savings ? "ON TRACK" : "BEHIND";
+    $("#saveStatus").style.color = actual >= BUDGET.savings ? "#91b66a" : "#df7777";
+  }
 
-  $("#monthLabel").textContent = new Date().toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+  if ($("#monthLabel")) $("#monthLabel").textContent = new Date().toLocaleDateString("en-IN", { month: "long", year: "numeric" });
 
-  $("#categories").innerHTML = BUDGET.categories.map(c => {
-    const v = catTotal(c.key);
-    const cp = Math.min(100, (v / c.budget) * 100);
-    return `
-      <div class="category">
-        <div class="icon">${c.icon}</div>
-        <div class="name">${c.name}</div>
-        <div class="value">${money(v)}</div>
-        <div class="muted">of ${money(c.budget)}</div>
-        <div class="mini">
-          <span style="width:${cp}%"></span>
+  if ($("#categories")) {
+    $("#categories").innerHTML = BUDGET.categories.map(c => {
+      const v = catTotal(c.key);
+      const cp = Math.min(100, (v / c.budget) * 100);
+      return `
+        <div class="category">
+          <div class="icon">${c.icon}</div>
+          <div class="name">${c.name}</div>
+          <div class="value">${money(v)}</div>
+          <div class="muted">of ${money(c.budget)}</div>
+          <div class="mini">
+            <span style="width:${cp}%"></span>
+          </div>
         </div>
-      </div>
-    `;
-  }).join("");
+      `;
+    }).join("");
+  }
 
   const u = unc();
   const banner = $("#uncatBanner");
-  banner.textContent = u.length ? `${u.length} transaction${u.length === 1 ? " is" : "s are"} uncategorized. Tag them on the Transactions page.` : "";
-  banner.classList.toggle("hidden", !u.length);
+  if (banner) {
+    banner.textContent = u.length ? `${u.length} transaction${u.length === 1 ? " is" : "s are"} uncategorized. Tag them on the Transactions page.` : "";
+    banner.classList.toggle("hidden", !u.length);
+  }
 
   const rec = [...state.transactions].sort((a, b) => dateValue(b) - dateValue(a)).slice(0, 6);
-  $("#recent").innerHTML = rec.length
-    ? rec.map(t => `
-      <div class="transaction-row">
-        <div>
-          <div class="merchant">${esc(t.merchant)}</div>
-          <div class="muted">${fmtDate(t.date)} ${t.time ? ` • ${esc(t.time)}` : ""} • ${catName(t.category)}</div>
+  if ($("#recent")) {
+    $("#recent").innerHTML = rec.length
+      ? rec.map(t => `
+        <div class="transaction-row">
+          <div>
+            <div class="merchant">${esc(t.merchant)}</div>
+            <div class="muted">${fmtDate(t.date)} ${t.time ? ` • ${esc(t.time)}` : ""} • ${catName(t.category)}</div>
+          </div>
+          <span class="tag">${esc(t.source || "Manual")}</span>
+          <div class="amount">${money(t.amount)}</div>
         </div>
-        <span class="tag">${esc(t.source || "Manual")}</span>
-        <div class="amount">${money(t.amount)}</div>
-      </div>
-    `).join("")
-    : `<div class="muted">No transactions yet.</div>`;
+      `).join("")
+      : `<div class="muted">No transactions yet.</div>`;
+  }
 
   const weekBudget = 4375;
   const now = new Date();
@@ -137,11 +145,13 @@ function renderDashboard() {
     .reduce((a, t) => a + Number(t.amount || 0), 0);
 
   const wl = Math.max(0, weekBudget - ws);
-  $("#weekLeft").textContent = money(wl);
-  $("#weekBar").style.width = Math.min(100, (ws / weekBudget) * 100) + "%";
-  $("#weekText").textContent = ws <= weekBudget
-    ? `You have ${money(wl)} left in the suggested weekly pace.`
-    : `You are ${money(ws - weekBudget)} over this week's pace.`;
+  if ($("#weekLeft")) $("#weekLeft").textContent = money(wl);
+  if ($("#weekBar")) $("#weekBar").style.width = Math.min(100, (ws / weekBudget) * 100) + "%";
+  if ($("#weekText")) {
+    $("#weekText").textContent = ws <= weekBudget
+      ? `You have ${money(wl)} left in the suggested weekly pace.`
+      : `You are ${money(ws - weekBudget)} over this week's pace.`;
+  }
 }
 
 function options(selected) {
@@ -156,6 +166,8 @@ function options(selected) {
 }
 
 function renderTransactions() {
+  if (!$("#rows")) return;
+
   const list = [...state.transactions].sort((a, b) => dateValue(b) - dateValue(a));
   const totalAmount = list.reduce((a, t) => a + Number(t.amount || 0), 0);
 
@@ -269,6 +281,8 @@ function attachKanbanDragListeners() {
 }
 
 function renderBudget() {
+  if (!$("#budgetTable")) return;
+
   const rows = BUDGET.categories.map(c => {
     const v = catTotal(c.key);
     return `
@@ -316,65 +330,68 @@ function renderAll() {
   renderBudget();
 
   const n = unc().length;
-  $("#uncatCount").textContent = n || "";
-  $("#inboxText").textContent = n
-    ? `${n} transaction${n === 1 ? "" : "s"} waiting for a category.`
-    : "Everything is categorized.";
+  if ($("#uncatCount")) $("#uncatCount").textContent = n || "";
 }
 
 function showView(v) {
   $$(".view").forEach(x => x.classList.toggle("active", x.id === v));
   $$(".nav-item").forEach(x => x.classList.toggle("active", x.dataset.view === v));
-  $("#pageTitle").textContent = {
-    dashboard: "Dashboard",
-    transactions: "Transactions",
-    upload: "Upload screenshot",
-    budget: "Budget"
-  }[v];
+  if ($("#pageTitle")) {
+    $("#pageTitle").textContent = {
+      dashboard: "Dashboard",
+      transactions: "Transactions",
+      upload: "Upload screenshot",
+      budget: "Budget"
+    }[v];
+  }
 }
 
 $$(".nav-item").forEach(b => b.onclick = () => showView(b.dataset.view));
 $$("[data-go]").forEach(b => b.onclick = () => showView(b.dataset.go));
 
-$("#quickAdd").onclick = () => openModal();
-$("#addBtn").onclick = () => openModal();
-$("#closeModal").onclick = () => $("#modal").classList.add("hidden");
-$("#mCategory").innerHTML = options("");
+if ($("#quickAdd")) $("#quickAdd").onclick = () => openModal();
+if ($("#addBtn")) $("#addBtn").onclick = () => openModal();
+if ($("#closeModal")) $("#closeModal").onclick = () => $("#modal").classList.add("hidden");
+if ($("#mCategory")) $("#mCategory").innerHTML = options("");
 
 function openModal() {
-  $("#mDate").value = new Date().toISOString().slice(0, 10);
-  $("#mMerchant").value = "";
-  $("#mAmount").value = "";
-  $("#mCategory").value = "";
-  $("#modal").classList.remove("hidden");
+  if ($("#mDate")) $("#mDate").value = new Date().toISOString().slice(0, 10);
+  if ($("#mMerchant")) $("#mMerchant").value = "";
+  if ($("#mAmount")) $("#mAmount").value = "";
+  if ($("#mCategory")) $("#mCategory").value = "";
+  if ($("#modal")) $("#modal").classList.remove("hidden");
 }
 
-$("#form").onsubmit = e => {
-  e.preventDefault();
-  state.transactions.push({
-    id: crypto.randomUUID(),
-    date: $("#mDate").value,
-    merchant: $("#mMerchant").value.trim(),
-    amount: +$("#mAmount").value,
-    category: $("#mCategory").value,
-    time: "",
-    source: "Manual"
-  });
-  $("#modal").classList.add("hidden");
-  save();
-};
+if ($("#form")) {
+  $("#form").onsubmit = e => {
+    e.preventDefault();
+    state.transactions.push({
+      id: crypto.randomUUID(),
+      date: $("#mDate").value,
+      merchant: $("#mMerchant").value.trim(),
+      amount: +$("#mAmount").value,
+      category: $("#mCategory").value,
+      time: "",
+      source: "Manual"
+    });
+    if ($("#modal")) $("#modal").classList.add("hidden");
+    save();
+  };
+}
 
 function handleFiles(selectedFiles) {
   files = [...selectedFiles];
-  $("#previews").innerHTML = files.map((f, i) => `
-    <div class="preview">
-      <img src="${URL.createObjectURL(f)}" alt="Screenshot ${i + 1}">
-    </div>
-  `).join("");
-  $("#importBtn").disabled = !files.length;
+  if ($("#previews")) {
+    $("#previews").innerHTML = files.map((f, i) => `
+      <div class="preview">
+        <img src="${URL.createObjectURL(f)}" alt="Screenshot ${i + 1}">
+      </div>
+    `).join("");
+  }
+  if ($("#importBtn")) $("#importBtn").disabled = !files.length;
 }
 
-$("#fileInput").onchange = e => handleFiles(e.target.files);
+if ($("#fileInput")) $("#fileInput").onchange = e => handleFiles(e.target.files);
 
 const dropzone = $(".dropzone");
 if (dropzone) {
@@ -385,7 +402,7 @@ if (dropzone) {
   });
 }
 
-$("#importBtn").onclick = runOCR;
+if ($("#importBtn")) $("#importBtn").onclick = runOCR;
 
 function isTimeToken(text) {
   return /^\d{1,2}:\d{2}(\s?[AP]M)?$/i.test(String(text || "").trim());
@@ -696,10 +713,10 @@ function preprocessImage(file) {
 async function runOCR() {
   if (!files.length) return;
 
-  $("#importBtn").disabled = true;
-  $("#ocrProgressWrap").classList.remove("hidden");
-  $("#ocrStatus").textContent = "● Reading transaction table…";
-  $("#ocrProgressBar").style.width = "0%";
+  if ($("#importBtn")) $("#importBtn").disabled = true;
+  if ($("#ocrProgressWrap")) $("#ocrProgressWrap").classList.remove("hidden");
+  if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Reading transaction table…";
+  if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = "0%";
 
   let added = 0;
   let skipped = 0;
@@ -709,8 +726,8 @@ async function runOCR() {
       logger: message => {
         if (message.status === "recognizing text") {
           const progress = Math.round((message.progress || 0) * 100);
-          $("#ocrProgressBar").style.width = `${progress}%`;
-          $("#ocrProgressText").textContent = `Reading screenshot… ${progress}%`;
+          if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = `${progress}%`;
+          if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Reading screenshot… ${progress}%`;
         }
       }
     });
@@ -722,7 +739,7 @@ async function runOCR() {
     });
 
     for (let i = 0; i < files.length; i++) {
-      $("#ocrProgressText").textContent = `Reading screenshot ${i + 1} of ${files.length}…`;
+      if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Reading screenshot ${i + 1} of ${files.length}…`;
       const processed = await preprocessImage(files[i]);
       const result = await worker.recognize(processed);
       const transactions = extractRows(result.data);
@@ -747,23 +764,23 @@ async function runOCR() {
 
     await worker.terminate();
     files = [];
-    $("#fileInput").value = "";
-    $("#previews").innerHTML = "";
-    $("#ocrProgressBar").style.width = "100%";
-    $("#ocrProgressText").textContent = `${added} transaction${added === 1 ? "" : "s"} detected`;
+    if ($("#fileInput")) $("#fileInput").value = "";
+    if ($("#previews")) $("#previews").innerHTML = "";
+    if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = "100%";
+    if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `${added} transaction${added === 1 ? "" : "s"} detected`;
 
     save();
     showView("transactions");
-    $("#ocrStatus").textContent = "● OCR engine ready";
+    if ($("#ocrStatus")) $("#ocrStatus").textContent = "● OCR engine ready";
     alert(`${added} transaction${added === 1 ? "" : "s"} imported${skipped ? `; ${skipped} duplicate${skipped === 1 ? "" : "s"} skipped` : ""}.`);
   } catch (error) {
     console.error("OCR error:", error);
-    $("#ocrStatus").textContent = "● OCR error";
+    if ($("#ocrStatus")) $("#ocrStatus").textContent = "● OCR error";
     alert("The screenshot could not be processed.");
   } finally {
-    $("#importBtn").disabled = !files.length;
+    if ($("#importBtn")) $("#importBtn").disabled = !files.length;
     setTimeout(() => {
-      $("#ocrProgressWrap").classList.add("hidden");
+      if ($("#ocrProgressWrap")) $("#ocrProgressWrap").classList.add("hidden");
     }, 1000);
   }
 }

@@ -1,126 +1,179 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>BudgetOS</title>
-  <link rel="stylesheet" href="styles.css" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BudgetOS - Expense Tracker</title>
+  <link rel="stylesheet" href="styles.css">
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
-<div class="app-shell">
-  <aside class="sidebar">
-    <div class="brand"><span></span>BudgetOS</div>
-    <nav>
-      <button class="nav-item active" data-view="dashboard">Dashboard</button>
-      <button class="nav-item" data-view="transactions">Transactions <b id="uncatCount"></b></button>
-      <button class="nav-item" data-view="upload">Upload screenshot</button>
-      <button class="nav-item" data-view="budget">Budget</button>
-    </nav>
-    <div class="goal"><strong>Monthly goal</strong><span>Save ₹40,000+</span></div>
-  </aside>
-
-  <main class="main">
-    <header class="topbar">
-      <div><div class="eyebrow">PERSONAL FINANCE</div><h1 id="pageTitle">Dashboard</h1></div>
-      <button class="primary" id="quickAdd">+ Add expense</button>
-    </header>
-
-    <section id="dashboard" class="view active">
-      <div class="hero-grid">
-        <div class="card dark">
-          <div class="eyebrow light">SAVINGS TARGET</div>
-          <div class="hero-number">₹40,000</div>
-          <div class="light muted">Minimum monthly savings</div>
-          <div class="progress dark-progress"><span id="saveBar"></span></div>
-          <div class="split light"><span>Actual savings <strong id="actualSavings">₹59,000</strong></span><strong id="saveStatus">ON TRACK</strong></div>
-        </div>
-        <div class="card">
-          <div class="eyebrow">VARIABLE SPEND</div>
-          <div class="hero-number" id="totalSpent">₹0</div>
-          <div class="muted">of ₹19,000 monthly limit</div>
-          <div class="split"><span>Remaining <strong id="spendRemaining">₹19,000</strong></span><span>PG <strong>₹21,000</strong></span></div>
-        </div>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="logo">
+        <span class="dot"></span>
+        <h2>BudgetOS</h2>
       </div>
-
-      <div id="uncatBanner" class="banner hidden"></div>
-
-      <div class="section-head"><div><h2>This month</h2><p>Imported transactions stay uncategorized until you tag them.</p></div><div class="pill" id="monthLabel"></div></div>
-      <div class="categories" id="categories"></div>
-
-      <div class="lower">
-        <div class="card">
-          <div class="section-head compact"><div><h2>Recent transactions</h2><p>Newest entries first.</p></div><button class="link" data-go="transactions">View all</button></div>
-          <div id="recent"></div>
-        </div>
-        <div class="card">
-          <div class="eyebrow">WEEKLY PACE</div>
-          <div class="hero-number" id="weekLeft">₹4,375</div>
-          <div class="muted">suggested spend remaining this week</div>
-          <div class="progress"><span id="weekBar"></span></div>
-          <div id="weekText" class="muted"></div>
-        </div>
+      <nav>
+        <button class="nav-item active" data-view="dashboard">
+          <span>Dashboard</span>
+        </button>
+        <button class="nav-item" data-view="transactions">
+          <span>Transactions</span>
+          <span id="uncatCount" class="badge"></span>
+        </button>
+        <button class="nav-item" data-view="upload">
+          <span>Upload screenshot</span>
+        </button>
+        <button class="nav-item" data-view="budget">
+          <span>Budget</span>
+        </button>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="muted">Monthly goal</div>
+        <strong>Save ₹40,000+</strong>
       </div>
-    </section>
+    </aside>
 
-    <section id="transactions" class="view">
-      <div id="uncatBanner" class="banner hidden"></div>
-      <div id="rows" class="table"></div>
-    </section>
+    <main class="content">
+      <header class="topbar">
+        <div>
+          <span class="subtext">PERSONAL FINANCE</span>
+          <h1 id="pageTitle">Dashboard</h1>
+        </div>
+        <button id="quickAdd" class="btn primary">+ Add expense</button>
+      </header>
 
-    <section id="upload" class="view">
-      <div class="section-head"><div><h2>Upload payment screenshot</h2><p>The app reads the transaction rows only. Categories are yours to assign later.</p></div></div>
-      <div class="upload-grid">
-        <div class="card">
-          <div class="status" id="ocrStatus">● OCR engine ready</div>
-          <input id="fileInput" type="file" accept="image/*" multiple hidden />
-          <label for="fileInput" class="dropzone">
-            <div class="upload-icon">↑</div>
-            <strong>Drop screenshot(s) here</strong>
-            <span>or click to choose images</span>
-          </label>
-          <div id="previews" class="previews"></div>
-          <button class="primary wide" id="importBtn">Scan & import transactions</button>
-          <div class="import-note">Transactions are imported automatically. Categories are assigned manually afterward.</div>
-          <div class="progress-wrap hidden" id="ocrProgressWrap">
-            <div class="progress"><span id="ocrProgressBar"></span></div>
-            <div id="ocrProgressText" class="muted">Reading…</div>
+      <!-- Dashboard View -->
+      <section id="dashboard" class="view active">
+        <div class="metrics">
+          <div class="card">
+            <span class="muted">Total Spent</span>
+            <strong id="totalSpent">₹0</strong>
+            <span class="sub" id="monthLabel">September 2026</span>
+          </div>
+          <div class="card">
+            <span class="muted">Variable Left</span>
+            <strong id="spendRemaining">₹19,000</strong>
+            <span class="sub">of ₹19,000 cap</span>
+          </div>
+          <div class="card">
+            <span class="muted">Projected Savings</span>
+            <strong id="actualSavings">₹40,000</strong>
+            <span class="sub" id="saveStatus">ON TRACK</span>
           </div>
         </div>
 
-        <div class="card explainer">
-          <div class="eyebrow">SIMPLE IMPORT</div>
-          <h2>Screenshot → transaction rows</h2>
-          <p>No AI categorization. No approval screen.</p>
-          <div class="flow">
-            <div><b>1</b><span>Upload the payment history screenshot.</span></div>
-            <div><b>2</b><span>OCR reads the visible rows and amounts.</span></div>
-            <div><b>3</b><span>Each row becomes its own transaction.</span></div>
-            <div><b>4</b><span>Tag Food, Shopping, Misc, etc. later.</span></div>
+        <div class="card progress-card">
+          <div class="progress-header">
+            <span>Savings Target Pace</span>
+            <span>Target: ₹40,000</span>
+          </div>
+          <div class="progress-bg">
+            <div id="saveBar" class="progress-fill" style="width: 100%;"></div>
           </div>
         </div>
-      </div>
-    </section>
 
-    <section id="budget" class="view">
-      <div class="section-head"><div><h2>Monthly budget</h2><p>₹80,000 income with ₹40,000 minimum savings.</p></div></div>
-      <div class="card table budget-table" id="budgetTable"></div>
-    </section>
-  </main>
-</div>
+        <div id="uncatBanner" class="banner hidden"></div>
 
-<div id="modal" class="modal hidden">
-  <div class="modal-card">
-    <div class="section-head compact"><div><h2>Add transaction</h2></div><button class="close" id="closeModal">×</button></div>
-    <form id="form">
-      <label>Date<input type="date" id="mDate" required></label>
-      <label>Merchant<input id="mMerchant" required placeholder="Merchant"></label>
-      <label>Amount<input type="number" id="mAmount" min="1" required placeholder="₹"></label>
-      <label>Category<select id="mCategory"></select></label>
-      <button class="primary wide">Save</button>
-    </form>
+        <div class="grid-2">
+          <div class="card">
+            <h3>Categories</h3>
+            <div id="categories" class="categories-grid"></div>
+          </div>
+          <div class="card">
+            <h3>Recent Activity</h3>
+            <div id="recent" class="recent-list"></div>
+          </div>
+        </div>
+
+        <div class="card week-card">
+          <h3>Weekly Pacing</h3>
+          <p id="weekText" class="muted">Tracking weekly spending pace...</p>
+          <div class="progress-bg">
+            <div id="weekBar" class="progress-fill" style="width: 0%;"></div>
+          </div>
+          <div class="week-footer">
+            <span>Suggested weekly limit: ₹4,375</span>
+            <strong id="weekLeft">₹4,375 left</strong>
+          </div>
+        </div>
+      </section>
+
+      <!-- Transactions View (Kanban Board) -->
+      <section id="transactions" class="view">
+        <div id="rows"></div>
+      </section>
+
+      <!-- Upload View -->
+      <section id="upload" class="view">
+        <div class="card upload-card">
+          <h2>Import Payment Screenshots</h2>
+          <p class="muted">Upload PhonePe, Google Pay, or Paytm receipts. OCR extracts date, time, merchant, and amount automatically.</p>
+          
+          <div class="dropzone">
+            <input type="file" id="fileInput" multiple accept="image/*">
+            <div class="drop-content">
+              <span class="upload-icon">📁</span>
+              <p>Drag & drop screenshots here or <strong>browse files</strong></p>
+            </div>
+          </div>
+
+          <div id="previews" class="previews-grid"></div>
+
+          <div class="upload-actions">
+            <button id="importBtn" class="btn primary" disabled>Run OCR Import</button>
+          </div>
+
+          <div id="ocrProgressWrap" class="ocr-progress hidden">
+            <div id="ocrStatus" class="status-text">● Processing...</div>
+            <div class="progress-bg">
+              <div id="ocrProgressBar" class="progress-fill" style="width: 0%;"></div>
+            </div>
+            <div id="ocrProgressText" class="sub">Reading images...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Budget View -->
+      <section id="budget" class="view">
+        <div class="card">
+          <h2>Budget Allocation</h2>
+          <div id="budgetTable" class="budget-table"></div>
+        </div>
+      </section>
+    </main>
   </div>
-</div>
-<script src="app.js"></script>
+
+  <!-- Add Expense Modal -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-content card">
+      <div class="modal-header">
+        <h3>Add Expense</h3>
+        <button id="closeModal" class="close-btn">×</button>
+      </div>
+      <form id="form">
+        <div class="form-group">
+          <label>Date</label>
+          <input type="date" id="mDate" required>
+        </div>
+        <div class="form-group">
+          <label>Merchant / Note</label>
+          <input type="text" id="mMerchant" placeholder="e.g. Swiggy, Coffee Shop" required>
+        </div>
+        <div class="form-group">
+          <label>Amount (₹)</label>
+          <input type="number" id="mAmount" placeholder="0" required>
+        </div>
+        <div class="form-group">
+          <label>Category</label>
+          <select id="mCategory"></select>
+        </div>
+        <button type="submit" class="btn primary full-width">Save Expense</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
 </body>
 </html>
