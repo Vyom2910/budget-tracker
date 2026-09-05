@@ -30,7 +30,7 @@ let state = {
 let files = [];
 let editingId = null;
 
-// Configure PDF.js Worker if library is loaded
+// Configure PDF.js Worker if available
 if (typeof pdfjsLib !== "undefined") {
   pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 }
@@ -54,7 +54,7 @@ function isTransactionSuccessful(textBlock) {
   if (FAILED_STATUS_KEYWORDS.some(keyword => lower.includes(keyword))) {
     return false;
   }
-  return lower.includes("success");
+  return lower.includes("success") || lower.includes("paid") || lower.includes("completed");
 }
 
 // ==========================================
@@ -597,7 +597,6 @@ function handleFiles(selectedFiles) {
   if ($("#importBtn")) $("#importBtn").disabled = !files.length;
 }
 
-// Bind Click & Drag events to allow file browsing
 const dropzoneEl = $("#dropzone") || $(".dropzone");
 const fileInputEl = $("#fileInput");
 const browseBtnEl = $("#browseBtn");
@@ -645,7 +644,7 @@ if (fileInputEl) {
 if ($("#importBtn")) $("#importBtn").onclick = runOCR;
 
 // ==========================================
-// OCR & PDF PARSING LOGIC
+// OCR & PARSING LOGIC (PDF + SCREENSHOT IMAGES)
 // ==========================================
 function median(arr) {
   if (!arr.length) return 0;
@@ -693,7 +692,7 @@ function buildLines(words) {
 function extractDateTime(words) {
   let date = "";
   let time = "";
-  const rawText = words.map(w => w.text || "").join(" ");
+  const rawText = Array.isArray(words) ? words.map(w => w.text || w).join(" ") : String(words);
   const cleanText = rawText.replace(/[,;]/g, " ");
 
   const timeMatch = cleanText.match(/\b(\d{1,2}:\d{2}\s*(?:AM|PM)?)\b/i);
@@ -737,10 +736,10 @@ function extractDateTime(words) {
   return { date, time };
 }
 
-// PDF Statement Parser tailored to UPI PDF layout
+// 1. PDF Statement Parser
 async function parsePDFFile(file) {
   if (typeof pdfjsLib === "undefined") {
-    console.error("PDF.js library is missing.");
+    console.error("PDF.js library missing.");
     return [];
   }
 
@@ -772,22 +771,16 @@ async function parsePDFFile(file) {
       const lineText = line.words.map(w => w.text).join(" ").trim();
       if (!lineText) continue;
 
-      // Rule 1: Status must explicitly be SUCCESS (ignore FAILED / PENDING)
-      if (!isTransactionSuccessful(lineText)) {
-        continue;
-      }
+      if (!isTransactionSuccessful(lineText)) continue;
 
-      // Rule 2: Payment must have explicit minus sign (e.g. -125.00, -109.00, -1.00)
       const minusMatch = lineText.match(/(?:^|\s|\|)\s*-\s*([₹RsINRinr]?\s*\d+(?:\.\d{1,2})?)/i);
       if (!minusMatch) continue;
 
       const rawAmountNum = parseFloat(minusMatch[1].replace(/[₹RsINRinr,\s]/gi, ""));
       if (isNaN(rawAmountNum) || rawAmountNum <= 0) continue;
 
-      // Parse Date
       const dateTime = extractDateTime(line.words);
 
-      // Parse Merchant Name
       let merchant = "";
       if (lineText.includes("|")) {
         const parts = lineText.split("|").map(p => p.trim());
@@ -821,27 +814,121 @@ async function parsePDFFile(file) {
   return transactions;
 }
 
-// Integrated Import Orchestration
+// 2. Screenshot Image OCR Parser
+async function parseImageFile(file) {
+  if (typeof Tesseract === "undefined") {
+    console.error("Tesseract.js library is missing.");
+    return [];
+  }
+
+  try {
+    const result = await Tesseract.recognize(file, "eng");
+    const text = result?.data?.text || "";
+    
+    if (FAILED_STATUS_KEYWORDS.some(kw => text.toLowerCase().includes(kw))) {
+      return [];
+    }
+
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const dateTime = extractDateTime(lines);
+
+    let amount = 0;
+    const amountMatches = [...text.matchAll(/(?:₹|Rs\.?|INR)?\s*(\d+(?:\.\d{1,2})?)/gi)];
+    for (const m of amountMatches) {
+      const val = parseFloat(m[1]);
+      if (val > 0 && val < 500000) {
+        amount = val;
+        break;
+      }
+    }
+
+    let merchant = "";
+    for (const line of lines) {
+      const mMatch = line.match(/(?:Paid to|To|Sent to|Transfer to)\s+(.+)/i);
+      if (mMatch) {
+        merchant = mMatch[1].trim();
+        break;
+      }
+    }
+
+    if (!merchant) {
+      for (const line of lines) {
+        if (!/^(Paid|Success|Completed|Failed|Payment|Debit|Credit|₹|Rs|\d{1,2}:|\d{1,2}\s+[A-Za-z]+)/i.test(line) && line.length > 2) {
+          merchant = line;
+          break;
+        }
+      }
+    }
+
+    if (merchant && amount > 0) {
+      return [{
+        id: generateId(),
+        merchant: merchant.replace(/[^\w\s&.-]/gi, "").trim() || "UPI Payment",
+        amount: amount,
+        date: dateTime.date,
+        time: dateTime.time,
+        category: "",
+        source: "Screenshot OCR"
+      }];
+    }
+  } catch (err) {
+    console.error("Image OCR error:", err);
+  }
+
+  return [];
+}
+
+// Combined Import Process
 async function runOCR() {
   if (!files.length) return;
 
   if ($("#importBtn")) $("#importBtn").disabled = true;
   if ($("#ocrProgressWrap")) $("#ocrProgressWrap").classList.remove("hidden");
-  if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Processing statement files…";
+  if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Processing files…";
   if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = "0%";
 
   let added = 0;
   let skipped = 0;
 
+  const pdfFiles = files.filter(f => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"));
+  const imageFiles = files.filter(f => f.type.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(f.name));
+
+  const totalFiles = pdfFiles.length + imageFiles.length;
+  let processed = 0;
+
   try {
-    const pdfFiles = files.filter(f => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"));
-
-    // Process PDF Statement files
+    // Process PDF statements
     for (let i = 0; i < pdfFiles.length; i++) {
+      processed++;
       if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Parsing PDF statement ${i + 1} of ${pdfFiles.length}…`;
-      const pdfTx = await parsePDFFile(pdfFiles[i]);
+      if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = `${Math.round((processed / totalFiles) * 100)}%`;
 
+      const pdfTx = await parsePDFFile(pdfFiles[i]);
       for (const transaction of pdfTx) {
+        const duplicate = state.transactions.some(
+          existing =>
+            existing.date === transaction.date &&
+            Number(existing.amount) === Number(transaction.amount) &&
+            String(existing.merchant).toLowerCase() === String(transaction.merchant).toLowerCase()
+        );
+
+        if (duplicate) {
+          skipped++;
+        } else {
+          state.transactions.push(transaction);
+          added++;
+        }
+      }
+    }
+
+    // Process Screenshot Images
+    for (let i = 0; i < imageFiles.length; i++) {
+      processed++;
+      if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Scanning screenshot ${i + 1} of ${imageFiles.length}…`;
+      if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = `${Math.round((processed / totalFiles) * 100)}%`;
+
+      const imgTx = await parseImageFile(imageFiles[i]);
+      for (const transaction of imgTx) {
         const duplicate = state.transactions.some(
           existing =>
             existing.date === transaction.date &&
@@ -867,11 +954,11 @@ async function runOCR() {
     save();
     showView("transactions");
     if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Ready";
-    alert(`${added} payment${added === 1 ? "" : "s"} imported${skipped ? `; ${skipped} duplicate/failed entry${skipped === 1 ? "" : "ies"} excluded` : ""}.`);
+    alert(`${added} transaction${added === 1 ? "" : "s"} imported${skipped ? `; ${skipped} duplicate/failed entry${skipped === 1 ? "" : "ies"} excluded` : ""}.`);
   } catch (error) {
     console.error("Import error:", error);
     if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Error processing file";
-    alert("An error occurred while reading the statement file.");
+    alert("An error occurred while reading the files.");
   } finally {
     if ($("#importBtn")) $("#importBtn").disabled = !files.length;
     setTimeout(() => {
