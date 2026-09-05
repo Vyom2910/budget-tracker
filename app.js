@@ -45,12 +45,18 @@ const FAILED_STATUS_KEYWORDS = [
   "reversed"
 ];
 
+const FORBIDDEN_MERCHANT_WORDS = [
+  "transaction", "history", "details", "successful", "success", "failed", "pending",
+  "completed", "debit", "debited", "credit", "credited", "payment", "paid", "sent",
+  "transfer", "transferred", "to", "from", "balance", "account", "bank", "upi",
+  "ref", "reference", "id", "order", "number", "no", "gpay", "google pay", "phonepe",
+  "paytm", "cred", "bhim", "rupay", "view", "share", "receipt", "statement", "home",
+  "help", "support", "done", "repeat", "split", "check", "passbook", "total", "amount"
+];
+
 function isTransactionSuccessful(textBlock) {
   const lower = String(textBlock || "").toLowerCase();
-  if (FAILED_STATUS_KEYWORDS.some(keyword => lower.includes(keyword))) {
-    return false;
-  }
-  return true;
+  return !FAILED_STATUS_KEYWORDS.some(keyword => lower.includes(keyword));
 }
 
 // ==========================================
@@ -119,49 +125,93 @@ function esc(s) {
   }[m]));
 }
 
-// Preprocessing helper to scale image and boost contrast for high-accuracy OCR
-function preprocessImage(file) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
+function cleanMerchantName(str) {
+  if (!str) return "";
+  let clean = str
+    .replace(/^(Paid\s+to|Paid\s+at|Sent\s+to|To|Transfer\s+to|Paying|Payment\s+to)[:\s]*/i, "")
+    .replace(/(?:SUCCESS|COMPLETED|PAID|SUCCESSFUL|FAILED|PENDING|UPI\s*ID|REF|TXN|ORDER|UTR|IMPS|NEFT).*/gi, "")
+    .replace(/[\?₹fF£tT~*§¤]/g, "")
+    .replace(/[^\w\s&.-]/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
-      let width = img.width;
-      let height = img.height;
-      const minDimension = 1000;
-      if (width < minDimension && height < minDimension) {
-        const scale = minDimension / Math.min(width, height);
-        width = Math.round(width * scale);
-        height = Math.round(height * scale);
+  const lower = clean.toLowerCase();
+  if (!clean || FORBIDDEN_MERCHANT_WORDS.includes(lower) || clean.length < 2) {
+    return "";
+  }
+  if (/transaction\s*history/i.test(lower) || /payment\s*details/i.test(lower)) {
+    return "";
+  }
+  return clean;
+}
+
+// Extract dates & time reliably across screenshots and PDF text
+function extractDateTime(input) {
+  let date = "";
+  let time = "";
+
+  const rawText = Array.isArray(input)
+    ? input.map(w => (typeof w === "object" ? w.text || "" : String(w))).join(" ")
+    : String(input || "");
+
+  const cleanText = rawText.replace(/[,;]/g, " ");
+
+  const timeMatch = cleanText.match(/\b(\d{1,2}:\d{2}\s*(?:AM|PM)?)\b/i);
+  if (timeMatch) time = timeMatch[1].replace(/\s+/g, "");
+
+  const lowerText = cleanText.toLowerCase();
+  const now = new Date();
+
+  if (/\btoday\b/i.test(lowerText)) {
+    date = now.toISOString().slice(0, 10);
+  } else if (/\byesterday\b/i.test(lowerText)) {
+    const yest = new Date(now);
+    yest.setDate(now.getDate() - 1);
+    date = yest.toISOString().slice(0, 10);
+  }
+
+  if (!date) {
+    const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+    const dateMatch1 = cleanText.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*(?:\s+(\d{2,4}))?\b/i);
+    const dateMatch2 = cleanText.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+(\d{2,4}))?\b/i);
+    const dateMatch3 = cleanText.match(/\b(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})\b/);
+    const dateMatch4 = cleanText.match(/\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/);
+
+    let day, month, year = now.getFullYear();
+
+    if (dateMatch1) {
+      day = parseInt(dateMatch1[1], 10);
+      month = monthNames.indexOf(dateMatch1[2].toLowerCase().slice(0, 3)) + 1;
+      if (dateMatch1[3]) {
+        year = parseInt(dateMatch1[3], 10);
+        if (year < 100) year += 2000;
       }
-
-      canvas.width = width;
-      canvas.height = height;
-      ctx.drawImage(img, 0, 0, width, height);
-
-      const imgData = ctx.getImageData(0, 0, width, height);
-      const data = imgData.data;
-      for (let i = 0; i < data.length; i += 4) {
-        const avg = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-        const contrast = 1.25;
-        const factor = (259 * (contrast * 255 + 255)) / (255 * (259 - contrast * 255));
-        const color = Math.min(255, Math.max(0, factor * (avg - 128) + 128));
-        data[i] = color;
-        data[i + 1] = color;
-        data[i + 2] = color;
+    } else if (dateMatch2) {
+      day = parseInt(dateMatch2[2], 10);
+      month = monthNames.indexOf(dateMatch2[1].toLowerCase().slice(0, 3)) + 1;
+      if (dateMatch2[3]) {
+        year = parseInt(dateMatch2[3], 10);
+        if (year < 100) year += 2000;
       }
-      ctx.putImageData(imgData, 0, 0);
-      resolve(canvas);
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      resolve(file);
-    };
-    img.src = url;
-  });
+    } else if (dateMatch3) {
+      day = parseInt(dateMatch3[1], 10);
+      month = parseInt(dateMatch3[2], 10);
+      year = parseInt(dateMatch3[3], 10);
+      if (year < 100) year += 2000;
+    } else if (dateMatch4) {
+      year = parseInt(dateMatch4[1], 10);
+      month = parseInt(dateMatch4[2], 10);
+      day = parseInt(dateMatch4[3], 10);
+    }
+
+    if (day && month && day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+      date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+  }
+
+  if (!date) date = now.toISOString().slice(0, 10);
+  return { date, time };
 }
 
 // ==========================================
@@ -685,7 +735,7 @@ if (fileInputEl) {
 if ($("#importBtn")) $("#importBtn").onclick = runOCR;
 
 // ==========================================
-// OCR & PARSING LOGIC (PDF + SCREENSHOT IMAGES)
+// PDF PARSER
 // ==========================================
 function median(arr) {
   if (!arr.length) return 0;
@@ -730,75 +780,6 @@ function buildLines(words) {
   return lines.sort((a, b) => a.cy - b.cy);
 }
 
-function extractDateTime(input) {
-  let date = "";
-  let time = "";
-
-  const rawText = Array.isArray(input)
-    ? input.map(w => (typeof w === "object" ? w.text || "" : String(w))).join(" ")
-    : String(input || "");
-
-  const cleanText = rawText.replace(/[,;]/g, " ");
-
-  const timeMatch = cleanText.match(/\b(\d{1,2}:\d{2}\s*(?:AM|PM)?)\b/i);
-  if (timeMatch) time = timeMatch[1].replace(/\s+/g, "");
-
-  const lowerText = cleanText.toLowerCase();
-  const now = new Date();
-
-  if (/\btoday\b/i.test(lowerText)) {
-    date = now.toISOString().slice(0, 10);
-  } else if (/\byesterday\b/i.test(lowerText)) {
-    const yest = new Date(now);
-    yest.setDate(now.getDate() - 1);
-    date = yest.toISOString().slice(0, 10);
-  }
-
-  if (!date) {
-    const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-
-    const dateMatch1 = cleanText.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*(?:\s+(\d{2,4}))?\b/i);
-    const dateMatch2 = cleanText.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+(\d{2,4}))?\b/i);
-    const dateMatch3 = cleanText.match(/\b(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})\b/);
-    const dateMatch4 = cleanText.match(/\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/);
-
-    let day, month, year = now.getFullYear();
-
-    if (dateMatch1) {
-      day = parseInt(dateMatch1[1], 10);
-      month = monthNames.indexOf(dateMatch1[2].toLowerCase().slice(0, 3)) + 1;
-      if (dateMatch1[3]) {
-        year = parseInt(dateMatch1[3], 10);
-        if (year < 100) year += 2000;
-      }
-    } else if (dateMatch2) {
-      day = parseInt(dateMatch2[2], 10);
-      month = monthNames.indexOf(dateMatch2[1].toLowerCase().slice(0, 3)) + 1;
-      if (dateMatch2[3]) {
-        year = parseInt(dateMatch2[3], 10);
-        if (year < 100) year += 2000;
-      }
-    } else if (dateMatch3) {
-      day = parseInt(dateMatch3[1], 10);
-      month = parseInt(dateMatch3[2], 10);
-      year = parseInt(dateMatch3[3], 10);
-      if (year < 100) year += 2000;
-    } else if (dateMatch4) {
-      year = parseInt(dateMatch4[1], 10);
-      month = parseInt(dateMatch4[2], 10);
-      day = parseInt(dateMatch4[3], 10);
-    }
-
-    if (day && month && day >= 1 && day <= 31 && month >= 1 && month <= 12) {
-      date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    }
-  }
-
-  if (!date) date = now.toISOString().slice(0, 10);
-  return { date, time };
-}
-
-// 1. PDF Statement Parser
 async function parsePDFFile(file) {
   if (typeof pdfjsLib === "undefined") {
     console.error("PDF.js library missing.");
@@ -831,11 +812,11 @@ async function parsePDFFile(file) {
 
     for (const line of lines) {
       const lineText = line.words.map(w => w.text).join(" ").trim();
-      if (!lineText) continue;
+      if (!lineText || !isTransactionSuccessful(lineText)) continue;
 
-      if (!isTransactionSuccessful(lineText)) continue;
+      const minusMatch = lineText.match(/(?:^|\s|\|)\s*-\s*([₹RsINRinr]?\s*\d+(?:\.\d{1,2})?)/i) ||
+                         lineText.match(/([₹RsINRinr]?\s*\d+(?:\.\d{1,2})?)\s*(?:Dr|Debit)/i);
 
-      const minusMatch = lineText.match(/(?:^|\s|\|)\s*-\s*([₹RsINRinr]?\s*\d+(?:\.\d{1,2})?)/i);
       if (!minusMatch) continue;
 
       const rawAmountNum = parseFloat(minusMatch[1].replace(/[₹RsINRinr,\s]/gi, ""));
@@ -849,15 +830,16 @@ async function parsePDFFile(file) {
         merchant = parts[0] || "";
       } else {
         merchant = lineText
-          .replace(/(?:SUCCESS|FAILED|PENDING)/gi, "")
+          .replace(/(?:SUCCESS|FAILED|PENDING|COMPLETED)/gi, "")
           .replace(/-\s*[₹RsINRinr]?\s*\d+(?:\.\d{1,2})?/gi, "")
+          .replace(/([₹RsINRinr]?\s*\d+(?:\.\d{1,2})?)\s*(?:Dr|Debit)/gi, "")
           .replace(/\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4}\b/gi, "")
           .replace(/\b(?:SBI|HDFC|ICICI|AXIS|BOB|PNB|UBI|YES)\s*\d*\b/gi, "")
           .replace(/\s+/g, " ")
           .trim();
       }
 
-      merchant = merchant.replace(/^(Name|Transaction History)\s*/i, "").trim();
+      merchant = cleanMerchantName(merchant);
 
       if (merchant && rawAmountNum) {
         transactions.push({
@@ -876,17 +858,17 @@ async function parsePDFFile(file) {
   return transactions;
 }
 
-// 2. Screenshot Image OCR Parser
+// ==========================================
+// SCREENSHOT OCR PARSER
+// ==========================================
 async function parseImageFile(file) {
   if (typeof Tesseract === "undefined") {
-    alert("Tesseract.js library is missing or failed to load. Please check your internet connection.");
+    alert("Tesseract.js library is missing. Please check your internet connection.");
     return [];
   }
 
   try {
-    const inputSource = await preprocessImage(file);
-
-    const result = await Tesseract.recognize(inputSource, "eng", {
+    const result = await Tesseract.recognize(file, "eng", {
       logger: m => {
         if (m.status === "recognizing text" && $("#ocrProgressText")) {
           const pct = Math.round((m.progress || 0) * 100);
@@ -896,122 +878,128 @@ async function parseImageFile(file) {
     });
 
     const rawText = result?.data?.text || "";
-
     if (!rawText.trim()) return [];
 
-    if (FAILED_STATUS_KEYWORDS.some(kw => rawText.toLowerCase().includes(kw))) {
-      return [];
-    }
-
     const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const transactions = [];
 
-    // ==========================================
-    // 1. EXTRACT AMOUNT
-    // ==========================================
-    let amount = 0;
+    // Scan line-by-line to collect all individual payment entries from single screens or list screens
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
 
-    // Replace garbled currency symbols produced by OCR
-    const normalizedText = rawText
-      .replace(/(?:[?₹fF£tT~*§¤]|Rs\.?|INR)\s*([\d,]+(?:\.\d{1,2})?)/gi, " ₹ $1 ")
-      .replace(/[\u20B9]/g, " ₹ ");
+      const amountMatch = line.match(/(?:[?₹fF£tT~*§¤]|Rs\.?|INR|-)\s*([\d,]+(?:\.\d{1,2})?)/i) ||
+                          line.match(/\b([\d,]+\.\d{2})\b/);
 
-    // Strategy A: Direct currency match
-    const currencyMatch = normalizedText.match(/₹\s*([\d,]+(?:\.\d{1,2})?)/i);
-    if (currencyMatch) {
-      const parsed = parseFloat(currencyMatch[1].replace(/,/g, ""));
-      if (parsed > 0 && parsed < 1000000) amount = parsed;
-    }
+      if (amountMatch) {
+        let amt = parseFloat(amountMatch[1].replace(/,/g, ""));
+        if (isNaN(amt) || amt <= 0 || amt > 1000000) continue;
 
-    // Strategy B: Keyword match
-    if (!amount) {
-      const keywordMatch = rawText.match(/(?:Paid|Amount|Total|Debited|Sent|Debit|Paid\s+out|Paid\s+to|Paid\s+at)\s*(?:of|for|to)?\s*[\?₹fF£tT~*§¤]?\s*₹?\s*([\d,]+(?:\.\d{1,2})?)/i);
-      if (keywordMatch) {
-        const parsed = parseFloat(keywordMatch[1].replace(/,/g, ""));
-        if (parsed > 0 && parsed < 1000000) amount = parsed;
-      }
-    }
+        // Ignore years (e.g. 2024, 2025, 2026) mistaken as amounts when no currency symbol is present
+        if (!line.includes("₹") && !line.includes("Rs") && !line.includes("INR") && !line.includes("-") && amt >= 1990 && amt <= 2035) {
+          continue;
+        }
 
-    // Strategy C: Line-by-line number scan (supports integers and decimals)
-    if (!amount) {
-      for (const line of lines) {
-        if (/\b(?:202[0-9]|19[0-9]{2})\b/.test(line)) continue;
-        if (/\b\d{1,2}:\d{2}\b/.test(line)) continue;
-        if (/\d{10,}/.test(line)) continue;
+        // Avoid long account/phone numbers or times
+        if (/\b\d{10}\b/.test(line) || /\b\d{1,2}:\d{2}\b/.test(line)) continue;
 
-        const match = line.match(/\b([\d,]+(?:\.\d{1,2})?)\b/);
-        if (match) {
-          const parsed = parseFloat(match[1].replace(/,/g, ""));
-          if (parsed > 0 && parsed < 1000000) {
-            amount = parsed;
-            break;
+        let detectedMerchant = "";
+        const contextLines = lines.slice(Math.max(0, i - 3), Math.min(lines.length, i + 3));
+        const contextText = contextLines.join(" ");
+
+        // Priority 1: Direct "Paid to / To / Sent to" matches
+        for (let j = Math.max(0, i - 2); j <= Math.min(lines.length - 1, i + 2); j++) {
+          const mMatch = lines[j].match(/(?:Paid\s+to|Paid\s+at|To|Sent\s+to|Transfer\s+to|Paying|Payment\s+to)[:\s]*(.*)/i);
+          if (mMatch) {
+            if (mMatch[1] && mMatch[1].trim().length >= 2) {
+              detectedMerchant = cleanMerchantName(mMatch[1]);
+            } else if (j + 1 < lines.length) {
+              detectedMerchant = cleanMerchantName(lines[j + 1]);
+            }
+            if (detectedMerchant) break;
           }
         }
-      }
-    }
 
-    if (!amount || isNaN(amount) || amount <= 0) return [];
+        // Priority 2: Preceding line candidate
+        if (!detectedMerchant && i > 0) {
+          detectedMerchant = cleanMerchantName(lines[i - 1]);
+        }
 
-    // ==========================================
-    // 2. EXTRACT MERCHANT
-    // ==========================================
-    let merchant = "";
+        // Priority 3: Line text with amount removed
+        if (!detectedMerchant) {
+          const lineWithoutAmount = line.replace(amountMatch[0], "").trim();
+          detectedMerchant = cleanMerchantName(lineWithoutAmount);
+        }
 
-    for (const line of lines) {
-      const mMatch = line.match(/(?:Paid\s+to|Paid\s+at|To|Sent\s+to|Transfer\s+to|Paying|Transferred\s+to|Payment\s+to)\s+(.+)/i);
-      if (mMatch) {
-        merchant = mMatch[1].trim();
-        break;
-      }
-    }
+        // Priority 4: Next line candidate
+        if (!detectedMerchant && i + 1 < lines.length) {
+          detectedMerchant = cleanMerchantName(lines[i + 1]);
+        }
 
-    if (!merchant) {
-      for (let i = 0; i < lines.length; i++) {
-        if (/^(?:Paid\s+to|Paid\s+at|To|Sent\s+to|Transfer\s+to|Paying|Payment\s+to)[:\s]*$/i.test(lines[i]) && lines[i + 1]) {
-          merchant = lines[i + 1].trim();
-          break;
+        if (!detectedMerchant || detectedMerchant.length < 2) {
+          detectedMerchant = "UPI Payment";
+        }
+
+        const dateTime = extractDateTime(contextText.length > 5 ? contextText : rawText);
+
+        const isDuplicate = transactions.some(t => Math.abs(t.amount - amt) < 0.01 && t.merchant === detectedMerchant);
+        if (!isDuplicate) {
+          transactions.push({
+            id: generateId(),
+            merchant: detectedMerchant,
+            amount: amt,
+            date: dateTime.date,
+            time: dateTime.time,
+            category: "",
+            source: "Screenshot OCR"
+          });
         }
       }
     }
 
-    if (!merchant) {
-      const ignoreRegex = /^(Paid|Success|Completed|Successful|Payment|Debit|Credit|₹|Rs|INR|To|From|Bank|UPI|Txn|Ref|GPay|PhonePe|Paytm|Google\s*Pay|Date|Time|Amount|Total|Debited|Sent|\d+)/i;
-      for (const line of lines) {
-        const cleanLine = line.replace(/[^\w\s&.-]/gi, "").trim();
-        if (cleanLine.length >= 3 && !ignoreRegex.test(cleanLine)) {
-          merchant = cleanLine;
-          break;
+    // Fallback for single payment receipt where line scanner missed amount
+    if (transactions.length === 0) {
+      let singleAmt = 0;
+      const currencyMatch = rawText.match(/(?:[?₹fF£tT~*§¤]|Rs\.?|INR)\s*([\d,]+(?:\.\d{1,2})?)/i);
+      if (currencyMatch) {
+        singleAmt = parseFloat(currencyMatch[1].replace(/,/g, ""));
+      }
+
+      if (singleAmt > 0) {
+        let singleMerchant = "";
+        const mMatch = rawText.match(/(?:Paid\s+to|Paid\s+at|To|Sent\s+to|Transfer\s+to|Paying|Payment\s+to)[:\s]*(.+)/i);
+        if (mMatch) {
+          singleMerchant = cleanMerchantName(mMatch[1]);
         }
+
+        if (!singleMerchant) {
+          for (const l of lines) {
+            const cleanL = cleanMerchantName(l);
+            if (cleanL && cleanL.length >= 2) {
+              singleMerchant = cleanL;
+              break;
+            }
+          }
+        }
+
+        const dateTime = extractDateTime(rawText);
+        transactions.push({
+          id: generateId(),
+          merchant: singleMerchant || "UPI Payment",
+          amount: singleAmt,
+          date: dateTime.date,
+          time: dateTime.time,
+          category: "",
+          source: "Screenshot OCR"
+        });
       }
     }
 
-    merchant = merchant
-      .replace(/(?:SUCCESS|COMPLETED|PAID|SUCCESSFUL|UPI\s*ID|REF|TXN|ORDER).*/gi, "")
-      .replace(/[^\w\s&.-]/gi, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    if (!merchant || merchant.length < 2) merchant = "UPI Payment";
-
-    // ==========================================
-    // 3. EXTRACT DATE & TIME
-    // ==========================================
-    const dateTime = extractDateTime(rawText);
-
-    return [{
-      id: generateId(),
-      merchant: merchant,
-      amount: amount,
-      date: dateTime.date,
-      time: dateTime.time,
-      category: "",
-      source: "Screenshot OCR"
-    }];
+    return transactions;
 
   } catch (err) {
     console.error("Image OCR error for", file.name, err);
+    return [];
   }
-
-  return [];
 }
 
 // Combined Import Process
@@ -1094,7 +1082,7 @@ async function runOCR() {
     save();
     showView("transactions");
     if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Ready";
-    alert(`${added} transaction${added === 1 ? "" : "s"} imported${skipped ? `; ${skipped} duplicate/failed entry${skipped === 1 ? "" : "ies"} excluded` : ""}.`);
+    alert(`${added} transaction${added === 1 ? "" : "s"} imported${skipped ? `; ${skipped} duplicate entry${skipped === 1 ? "" : "ies"} excluded` : ""}.`);
   } catch (error) {
     console.error("Import error:", error);
     if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Error processing file";
