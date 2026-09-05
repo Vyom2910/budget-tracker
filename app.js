@@ -160,49 +160,111 @@ function renderTransactions() {
   const totalAmount = list.reduce((a, t) => a + Number(t.amount || 0), 0);
 
   const summaryBarHtml = `
-    <div style="display:flex; justify-content:space-between; align-items:center; padding: 14px 18px; background: rgba(255,255,255,0.05); border-radius: 12px; margin-bottom: 16px; border: 1px solid rgba(255,255,255,0.08);">
+    <div class="transactions-summary-bar">
       <div>
-        <span style="color:#8e9b9e; font-size:0.85rem; display:block;">Total Transactions</span>
-        <strong style="font-size:1.1rem; color:#fff;">${list.length} transaction${list.length === 1 ? "" : "s"}</strong>
+        <span class="muted-label">Total Transactions</span>
+        <strong>${list.length} transaction${list.length === 1 ? "" : "s"}</strong>
       </div>
       <div style="text-align:right;">
-        <span style="color:#8e9b9e; font-size:0.85rem; display:block;">Total Spent</span>
-        <strong style="font-size:1.3rem; color:#91b66a;">${money(totalAmount)}</strong>
+        <span class="muted-label">Total Spent</span>
+        <strong class="total-spent-amount">${money(totalAmount)}</strong>
       </div>
     </div>
   `;
 
-  const rowsHtml = list.length
-    ? list.map(t => `
-      <div class="table-row">
-        <span>${fmtDate(t.date)} ${t.time ? `<small>${esc(t.time)}</small>` : ""}</span>
-        <strong>${esc(t.merchant)}</strong>
-        <strong>${money(t.amount)}</strong>
-        <select data-cat="${t.id}" class="${t.category ? "" : "uncat"}">
-          ${options(t.category)}
-        </select>
-        <button class="delete" data-del="${t.id}">×</button>
-      </div>
-    `).join("")
-    : `<div style="padding:22px;color:#7a8385">No transactions yet.</div>`;
+  const columns = [
+    { key: "", name: "Uncategorized", icon: "📥" },
+    ...BUDGET.categories.map(c => ({ key: c.key, name: c.name, icon: c.icon }))
+  ];
 
-  $("#rows").innerHTML = summaryBarHtml + rowsHtml;
+  const boardHtml = `
+    <div class="kanban-board">
+      ${columns.map(col => {
+        const colTx = list.filter(t => (col.key === "" ? !t.category : t.category === col.key));
+        const colSum = colTx.reduce((a, t) => a + Number(t.amount || 0), 0);
+        return `
+          <div class="kanban-column" data-col-key="${col.key}">
+            <div class="kanban-column-header">
+              <div class="kanban-title">
+                <span>${col.icon}</span>
+                <strong>${col.name}</strong>
+                <span class="kanban-badge">${colTx.length}</span>
+              </div>
+              <div class="kanban-col-sum">${money(colSum)}</div>
+            </div>
+            <div class="kanban-cards-container">
+              ${colTx.map(t => `
+                <div class="kanban-card" draggable="true" data-card-id="${t.id}">
+                  <div class="kanban-card-top">
+                    <span class="kanban-merchant">${esc(t.merchant)}</span>
+                    <button class="delete-card-btn" data-del="${t.id}">×</button>
+                  </div>
+                  <div class="kanban-card-bottom">
+                    <span class="kanban-date">${fmtDate(t.date)}${t.time ? ` • ${esc(t.time)}` : ""}</span>
+                    <strong class="kanban-amount">${money(t.amount)}</strong>
+                  </div>
+                </div>
+              `).join("")}
+              ${colTx.length === 0 ? `<div class="kanban-empty">Drop items here</div>` : ""}
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
 
-  $$("[data-cat]").forEach(s => {
-    s.onchange = () => {
-      const t = state.transactions.find(x => x.id === s.dataset.cat);
-      if (t) {
-        t.category = s.value;
-        save();
-      }
+  $("#rows").innerHTML = summaryBarHtml + boardHtml;
+
+  $$(".delete-card-btn").forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      state.transactions = state.transactions.filter(t => t.id !== btn.dataset.del);
+      save();
     };
   });
 
-  $$("[data-del]").forEach(b => {
-    b.onclick = () => {
-      state.transactions = state.transactions.filter(t => t.id !== b.dataset.del);
-      save();
-    };
+  attachKanbanDragListeners();
+}
+
+function attachKanbanDragListeners() {
+  const cards = $$(".kanban-card");
+  const columns = $$(".kanban-column");
+
+  cards.forEach(card => {
+    card.addEventListener("dragstart", (e) => {
+      card.classList.add("dragging");
+      e.dataTransfer.setData("text/plain", card.dataset.cardId);
+      e.dataTransfer.effectAllowed = "move";
+    });
+
+    card.addEventListener("dragend", () => {
+      card.classList.remove("dragging");
+    });
+  });
+
+  columns.forEach(column => {
+    column.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      column.classList.add("drag-over");
+    });
+
+    column.addEventListener("dragleave", () => {
+      column.classList.remove("drag-over");
+    });
+
+    column.addEventListener("drop", (e) => {
+      e.preventDefault();
+      column.classList.remove("drag-over");
+      const cardId = e.dataTransfer.getData("text/plain");
+      const targetCategory = column.dataset.colKey;
+      const transaction = state.transactions.find(t => t.id === cardId);
+
+      if (transaction && transaction.category !== targetCategory) {
+        transaction.category = targetCategory;
+        save();
+      }
+    });
   });
 }
 
