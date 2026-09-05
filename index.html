@@ -5,8 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BudgetOS - Expense Tracker</title>
   <link rel="stylesheet" href="styles.css">
-  <!-- Add PDF.js library to <head> -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
@@ -121,25 +119,30 @@
 
       <!-- Upload View -->
       <section id="upload" class="view">
-        <div class="upload-card">
-          <h3>Upload Statement or Screenshots</h3>
-          <div class="dropzone" id="dropzone">
-            <input type="file" id="fileInput" multiple accept="image/*,.pdf,application/pdf" style="display: none;" />
-            <div class="dropzone-content">
-              <span class="dropzone-icon">📁</span>
-              <p>Drag & drop statement files here, or <button type="button" id="browseBtn" class="btn-browse">Browse Files</button></p>
-              <span class="muted">Supports PNG, JPG, and UPI PDF statements</span>
+        <div class="card upload-card">
+          <h2>Import Payment Screenshots</h2>
+          <p class="muted">Upload PhonePe, Google Pay, or Paytm receipts. OCR extracts date, time, merchant, and amount automatically.</p>
+          
+          <div class="dropzone">
+            <input type="file" id="fileInput" multiple accept="image/*">
+            <div class="drop-content">
+              <span class="upload-icon">📁</span>
+              <p>Drag & drop screenshots here or <strong>browse files</strong></p>
             </div>
           </div>
-          <div id="previews" class="previews-container"></div>
-          <button id="importBtn" class="btn primary" disabled>Import Transactions</button>
-          
-          <div id="ocrProgressWrap" class="progress-wrap hidden">
-            <div id="ocrStatus" class="status-text">● Processing statement files…</div>
-            <div class="progress-bar-bg">
-              <div id="ocrProgressBar" class="progress-bar-fill" style="width: 0%;"></div>
+
+          <div id="previews" class="previews-grid"></div>
+
+          <div class="upload-actions">
+            <button id="importBtn" class="btn primary" disabled>Run OCR Import</button>
+          </div>
+
+          <div id="ocrProgressWrap" class="ocr-progress hidden">
+            <div id="ocrStatus" class="status-text">● Processing...</div>
+            <div class="progress-bg">
+              <div id="ocrProgressBar" class="progress-fill" style="width: 0%;"></div>
             </div>
-            <span id="ocrProgressText" class="muted">Starting…</span>
+            <div id="ocrProgressText" class="sub">Reading images...</div>
           </div>
         </div>
       </section>

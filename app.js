@@ -1,6 +1,3 @@
-// ==========================================
-// CONFIGURATION & INITIAL STATE
-// ==========================================
 const DEFAULT_CATEGORIES = [
   { key: "food", name: "Eating out", icon: "🍱", budget: 6000 },
   { key: "fruit", name: "Fruits", icon: "🍎", budget: 3000 },
@@ -30,29 +27,6 @@ let state = {
 let files = [];
 let editingId = null;
 
-if (typeof pdfjsLib !== "undefined") {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-}
-
-const FAILED_STATUS_KEYWORDS = [
-  "failed",
-  "declined",
-  "unsuccessful",
-  "cancelled",
-  "canceled",
-  "expired",
-  "rejected",
-  "reversed"
-];
-
-function isTransactionSuccessful(textBlock) {
-  const lower = String(textBlock || "").toLowerCase();
-  return !FAILED_STATUS_KEYWORDS.some(keyword => lower.includes(keyword));
-}
-
-// ==========================================
-// UTILITY FUNCTIONS
-// ==========================================
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const money = n => "₹" + Math.round(Number(n) || 0).toLocaleString("en-IN");
@@ -92,11 +66,11 @@ function dateValue(t) {
 }
 
 function time24(x) {
-  const m = String(x).match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  const m = String(x).match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
   if (!m) return "00:00";
   let h = +m[1];
-  if (m[3] && m[3].toUpperCase() === "PM" && h !== 12) h += 12;
-  if (m[3] && m[3].toUpperCase() === "AM" && h === 12) h = 0;
+  if (m[3].toUpperCase() === "PM" && h !== 12) h += 12;
+  if (m[3].toUpperCase() === "AM" && h === 12) h = 0;
   return String(h).padStart(2, "0") + ":" + m[2];
 }
 
@@ -116,116 +90,6 @@ function esc(s) {
   }[m]));
 }
 
-function isNoiseMerchant(str) {
-  const l = String(str || "").toLowerCase().trim();
-  if (!l || l.length < 2) return true;
-  
-  // Directly filter out header OCR variations
-  if (/^h[i1l]st?[o0]r[y1]|hisory|histry|history$/i.test(l)) return true;
-  
-  const noiseWords = [
-    "history", "hisory", "histry", "filter", "filters", "search", "check balance", "view details",
-    "successful", "completed", "payment history", "transaction history",
-    "home", "help", "support", "today", "yesterday", "paid to", "sent to"
-  ];
-  if (noiseWords.includes(l)) return true;
-  if (/^\d{1,2}[\.:]\d{2}/.test(l)) return true;
-  if (/^\d+$/.test(l)) return true;
-  return false;
-}
-
-function isDateTimeLine(str) {
-  if (!str) return false;
-  return /\b\d{1,2}[\.:]\d{2}\s*(?:AM|PM)?\b/i.test(str) ||
-         /\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b/i.test(str) ||
-         /\b(?:Today|Yesterday)\b/i.test(str);
-}
-
-function cleanMerchantName(str) {
-  if (!str) return "";
-  let clean = String(str || "").trim();
-
-  // Strip OCR prefixes like "5.8", "gi.", "gi. 8", "WwW", clocks, and leading digits
-  clean = clean
-    .replace(/^(?:5\.8|gi\.\s*\d*|www|ww|vvw|vw|gt\.|g1\.|g\.)\s*/i, "")
-    .replace(/^\d{1,2}[\.:]\d{2}\s*/, "")
-    .replace(/^\d+(\.\d+)?\s+/, "")
-    .replace(/^(Paid\s+to|Paid\s+at|Sent\s+to|Payment\s+to|Paying|To|Transfer\s+to)[:\s]*/i, "");
-
-  // Remove trailing amount numbers, hyphens, and system tokens
-  clean = clean
-    .replace(/[-\u2013\u2014\u2212]\s*[₹RsINRinr\?fF£tT~*§¤\$]?\s*\d+.*/gi, "")
-    .replace(/\s*-\s*\d+\s*$/g, "")
-    .replace(/(?:SUCCESSFUL|SUCCESS|COMPLETED|PAID|FAILED|PENDING|DEBITED|CREDITED|UPI\s*ID|REF|TXN|ORDER|UTR|IMPS|NEFT).*/gi, "")
-    .replace(/[\?₹fF£tT~*§¤\$]/g, "")
-    .replace(/[^\w\s&.-]/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (isNoiseMerchant(clean)) return "";
-  return clean;
-}
-
-function extractDateTime(input) {
-  let date = "";
-  let time = "";
-
-  const rawText = Array.isArray(input)
-    ? input.map(w => (typeof w === "object" ? w.text || "" : String(w))).join(" ")
-    : String(input || "");
-
-  const cleanText = rawText.replace(/[,;]/g, " ");
-
-  const timeMatch = cleanText.match(/\b(\d{1,2}[\.:]\d{2}\s*(?:AM|PM)?)\b/i);
-  if (timeMatch) time = timeMatch[1].replace(/\./g, ":").replace(/\s+/g, "");
-
-  const lowerText = cleanText.toLowerCase();
-  const now = new Date();
-
-  if (/\btoday\b/i.test(lowerText)) {
-    date = now.toISOString().slice(0, 10);
-  } else if (/\byesterday\b/i.test(lowerText)) {
-    const yest = new Date(now);
-    yest.setDate(now.getDate() - 1);
-    date = yest.toISOString().slice(0, 10);
-  }
-
-  if (!date) {
-    const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-
-    const dateMatch1 = cleanText.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*(?:\s+(\d{2,4}))?\b/i);
-    const dateMatch2 = cleanText.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+(\d{2,4}))?\b/i);
-
-    let day, month, year = now.getFullYear();
-
-    if (dateMatch1) {
-      day = parseInt(dateMatch1[1], 10);
-      month = monthNames.indexOf(dateMatch1[2].toLowerCase().slice(0, 3)) + 1;
-      if (dateMatch1[3]) {
-        year = parseInt(dateMatch1[3], 10);
-        if (year < 100) year += 2000;
-      }
-    } else if (dateMatch2) {
-      day = parseInt(dateMatch2[2], 10);
-      month = monthNames.indexOf(dateMatch2[1].toLowerCase().slice(0, 3)) + 1;
-      if (dateMatch2[3]) {
-        year = parseInt(dateMatch2[3], 10);
-        if (year < 100) year += 2000;
-      }
-    }
-
-    if (day && month && day >= 1 && day <= 31 && month >= 1 && month <= 12) {
-      date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    }
-  }
-
-  if (!date) date = now.toISOString().slice(0, 10);
-  return { date, time };
-}
-
-// ==========================================
-// RENDERERS
-// ==========================================
 function renderDashboard() {
   const s = spent();
   const actual = BUDGET.income - BUDGET.pg - s;
@@ -285,6 +149,25 @@ function renderDashboard() {
       `).join("")
       : `<div class="muted">No transactions yet.</div>`;
   }
+
+  const weekBudget = 4375;
+  const now = new Date();
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  monday.setHours(0, 0, 0, 0);
+
+  const ws = state.transactions
+    .filter(t => new Date((t.date || "1970-01-01") + "T12:00:00") >= monday)
+    .reduce((a, t) => a + Number(t.amount || 0), 0);
+
+  const wl = Math.max(0, weekBudget - ws);
+  if ($("#weekLeft")) $("#weekLeft").textContent = money(wl);
+  if ($("#weekBar")) $("#weekBar").style.width = Math.min(100, (ws / weekBudget) * 100) + "%";
+  if ($("#weekText")) {
+    $("#weekText").textContent = ws <= weekBudget
+      ? `You have ${money(wl)} left in the suggested weekly pace.`
+      : `You are ${money(ws - weekBudget)} over this week's pace.`;
+  }
 }
 
 function options(selected) {
@@ -299,7 +182,7 @@ function options(selected) {
 }
 
 function handleAddCategory() {
-  const name = prompt("Enter new category name:");
+  const name = prompt("Enter new category name (e.g. Health, Subscriptions):");
   if (!name || !name.trim()) return;
 
   const cleanName = name.trim();
@@ -310,14 +193,15 @@ function handleAddCategory() {
     return;
   }
 
-  const icon = prompt(`Enter icon for "${cleanName}":`, "🏷️") || "🏷️";
-  const budgetStr = prompt(`Enter monthly budget amount (₹):`, "1000");
+  const icon = prompt(`Enter an icon/emoji for "${cleanName}":`, "🏷️") || "🏷️";
+  const budgetStr = prompt(`Enter monthly budget amount for "${cleanName}" (₹):`, "1000");
+  const budget = Math.max(0, Number(budgetStr) || 0);
 
   state.categories.push({
     key: key,
     name: cleanName,
     icon: icon.trim(),
-    budget: Math.max(0, Number(budgetStr) || 0)
+    budget: budget
   });
 
   save();
@@ -327,10 +211,13 @@ function deleteCategory(catKey) {
   const categoryToDelete = state.categories.find(c => c.key === catKey);
   if (!categoryToDelete) return;
 
-  if (!confirm(`Delete "${categoryToDelete.name}"? Transactions will be uncategorized.`)) return;
+  const confirmed = confirm(`Are you sure you want to delete the "${categoryToDelete.name}" category?\nTransactions in this category will be moved to Uncategorized.`);
+  if (!confirmed) return;
 
   state.transactions.forEach(tx => {
-    if (tx.category === catKey) tx.category = "";
+    if (tx.category === catKey) {
+      tx.category = "";
+    }
   });
 
   state.categories = state.categories.filter(c => c.key !== catKey);
@@ -366,6 +253,7 @@ function renderTransactions() {
       ${columns.map(col => {
         const colTx = list.filter(t => (col.key === "" ? !t.category : t.category === col.key));
         const colSum = colTx.reduce((a, t) => a + Number(t.amount || 0), 0);
+        const isUncategorized = col.key === "";
         return `
           <div class="kanban-column" data-col-key="${col.key}">
             <div class="kanban-column-header">
@@ -376,17 +264,19 @@ function renderTransactions() {
               </div>
               <div class="kanban-header-right">
                 <span class="kanban-col-sum">${money(colSum)}</span>
-                ${col.key !== "" ? `<button class="delete-category-btn" data-cat-key="${col.key}">×</button>` : ""}
+                ${!isUncategorized ? `
+                  <button class="delete-category-btn" data-cat-key="${col.key}" title="Delete Category">×</button>
+                ` : ""}
               </div>
             </div>
             <div class="kanban-cards-container">
               ${colTx.map(t => `
                 <div class="kanban-card" draggable="true" data-card-id="${t.id}">
                   <div class="kanban-card-top">
-                    <span class="kanban-merchant" data-edit="${t.id}">${esc(t.merchant)}</span>
+                    <span class="kanban-merchant" title="Click to edit" data-edit="${t.id}">${esc(t.merchant)}</span>
                     <div class="kanban-card-actions">
-                      <button class="edit-card-btn" data-edit="${t.id}">✏️</button>
-                      <button class="delete-card-btn" data-del="${t.id}">×</button>
+                      <button class="edit-card-btn" data-edit="${t.id}" title="Edit transaction">✏️</button>
+                      <button class="delete-card-btn" data-del="${t.id}" title="Delete transaction">×</button>
                     </div>
                   </div>
                   <div class="kanban-card-bottom">
@@ -420,7 +310,14 @@ function renderTransactions() {
     };
   });
 
-  $$(".edit-card-btn, .kanban-merchant").forEach(el => {
+  $$(".edit-card-btn").forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      openModal(btn.dataset.edit);
+    };
+  });
+
+  $$(".kanban-merchant").forEach(el => {
     el.onclick = (e) => {
       e.stopPropagation();
       openModal(el.dataset.edit);
@@ -438,6 +335,7 @@ function attachKanbanDragListeners() {
     card.addEventListener("dragstart", (e) => {
       card.classList.add("dragging");
       e.dataTransfer.setData("text/plain", card.dataset.cardId);
+      e.dataTransfer.effectAllowed = "move";
     });
 
     card.addEventListener("dragend", () => {
@@ -448,6 +346,7 @@ function attachKanbanDragListeners() {
   columns.forEach(column => {
     column.addEventListener("dragover", (e) => {
       e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
       column.classList.add("drag-over");
     });
 
@@ -495,6 +394,24 @@ function renderBudget() {
       <span>Status</span>
     </div>
     ${rows}
+    <div class="budget-line">
+      <strong>⚪ Uncategorized</strong>
+      <span>—</span>
+      <span>${money(unc().reduce((a, t) => a + Number(t.amount || 0), 0))}</span>
+      <span>Tag manually</span>
+    </div>
+    <div class="budget-line">
+      <strong>Flex / buffer</strong>
+      <span>${money(BUDGET.flex)}</span>
+      <span>—</span>
+      <span>Available buffer</span>
+    </div>
+    <div class="budget-line budget-total">
+      <strong>Variable spending</strong>
+      <span>₹19,000</span>
+      <span>${money(spent())}</span>
+      <span>${spent() <= 19000 ? "Within limit" : "Over limit"}</span>
+    </div>
   `;
 }
 
@@ -507,9 +424,6 @@ function renderAll() {
   if ($("#uncatCount")) $("#uncatCount").textContent = n || "";
 }
 
-// ==========================================
-// ROUTING & NAVIGATION
-// ==========================================
 const VALID_VIEWS = ["dashboard", "transactions", "upload", "budget"];
 
 function getActiveViewFromHash() {
@@ -527,28 +441,42 @@ function showView(v, updateHash = true) {
     $("#pageTitle").textContent = {
       dashboard: "Dashboard",
       transactions: "Transactions",
-      upload: "Upload statement",
+      upload: "Upload screenshot",
       budget: "Budget"
     }[targetView];
   }
 
+  // Update URL hash without triggering browser jump-scroll
   if (updateHash && window.location.hash !== `#${targetView}`) {
     history.pushState(null, "", `#${targetView}`);
   }
 
+  // Ensure view scroll position resets cleanly to top
   window.scrollTo(0, 0);
+  const contentArea = $(".content");
+  if (contentArea) contentArea.scrollTop = 0;
 }
 
 $$(".nav-item").forEach(b => b.onclick = () => showView(b.dataset.view));
 $$("[data-go]").forEach(b => b.onclick = () => showView(b.dataset.go));
 
-window.addEventListener("popstate", () => showView(getActiveViewFromHash(), false));
+// Listen for browser Back/Forward navigation
+window.addEventListener("popstate", () => {
+  showView(getActiveViewFromHash(), false);
+});
 
-// ==========================================
-// MODALS
-// ==========================================
+const sidebar = $("#sidebar");
+const sidebarToggle = $("#sidebarToggle");
+if (sidebarToggle && sidebar) {
+  sidebarToggle.onclick = () => {
+    sidebar.classList.toggle("collapsed");
+    sidebarToggle.textContent = sidebar.classList.contains("collapsed") ? "»" : "«";
+  };
+}
+
 if ($("#addExpenseBtn")) $("#addExpenseBtn").onclick = () => openModal();
 if ($("#addCategoryBtn")) $("#addCategoryBtn").onclick = handleAddCategory;
+if ($("#quickAdd")) $("#quickAdd").onclick = () => openModal();
 if ($("#closeModal")) $("#closeModal").onclick = () => $("#modal").classList.add("hidden");
 
 function openModal(editId = null) {
@@ -601,139 +529,377 @@ if ($("#form")) {
   };
 }
 
-// ==========================================
-// FILE HANDLERS
-// ==========================================
 function handleFiles(selectedFiles) {
-  files = Array.from(selectedFiles);
+  files = [...selectedFiles];
   if ($("#previews")) {
     $("#previews").innerHTML = files.map((f, i) => `
-      <div class="preview" style="display:inline-block;margin:6px;">
-        <span style="font-size:0.8rem;">${esc(f.name)}</span>
+      <div class="preview">
+        <img src="${URL.createObjectURL(f)}" alt="Screenshot ${i + 1}">
       </div>
     `).join("");
   }
   if ($("#importBtn")) $("#importBtn").disabled = !files.length;
 }
 
-const fileInputEl = $("#fileInput");
-if (fileInputEl) {
-  fileInputEl.addEventListener("change", e => {
-    if (e.target.files && e.target.files.length) handleFiles(e.target.files);
+if ($("#fileInput")) $("#fileInput").onchange = e => handleFiles(e.target.files);
+
+const dropzone = $(".dropzone");
+if (dropzone) {
+  dropzone.addEventListener("dragover", e => e.preventDefault());
+  dropzone.addEventListener("drop", e => {
+    e.preventDefault();
+    if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
   });
 }
 
 if ($("#importBtn")) $("#importBtn").onclick = runOCR;
 
-// ==========================================
-// ACCURATE SCREENSHOT OCR PARSER
-// ==========================================
-async function parseImageFile(file) {
-  if (typeof Tesseract === "undefined") return [];
-
-  try {
-    const result = await Tesseract.recognize(file, "eng", {
-      logger: m => {
-        if (m.status === "recognizing text" && $("#ocrProgressText")) {
-          const pct = Math.round((m.progress || 0) * 100);
-          $("#ocrProgressText").textContent = `Scanning ${esc(file.name)}: ${pct}%`;
-        }
-      }
-    });
-
-    const rawText = result?.data?.text || "";
-    if (!rawText.trim()) return [];
-
-    // Filter baseline noise lines across the document
-    const rawLines = rawText.split(/\r?\n/)
-      .map(l => l.trim())
-      .filter(l => l && !/^h[i1l]st?[o0]r[y1]$/i.test(l) && l.toLowerCase() !== "hisory");
-
-    // 1. SEGMENT LINES INTO DISCRETE TRANSACTION BLOCKS
-    const blocks = [];
-    let currentBlock = [];
-
-    for (const line of rawLines) {
-      // Trigger new block boundary when encountering vendor markers or fresh dates
-      const isBoundary = /^(Paid\s+to|Sent\s+to|Transfer\s+to|Paying|To|Received\s+from)/i.test(line) ||
-                         /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\b/i.test(line) ||
-                         /\b\d{1,2}:\d{2}\s*(?:AM|PM)?\b/i.test(line);
-
-      if (isBoundary && currentBlock.length > 0) {
-        blocks.push(currentBlock.join("\n"));
-        currentBlock = [];
-      }
-      currentBlock.push(line);
-    }
-    if (currentBlock.length) blocks.push(currentBlock.join("\n"));
-
-    // 2. EXTRACT PROPERTIES WITHIN EACH ISOLATED BLOCK
-    const parsedTransactions = [];
-
-    for (const blockText of blocks) {
-      if (!isTransactionSuccessful(blockText)) continue;
-
-      // Extract amount scoped strictly to blockText
-      const amtMatch = blockText.match(/(?:[-\u2013\u2014\u2212\u20B9₹Rs]\s*)?(\d+(?:\.\d{1,2})?)/i);
-      if (!amtMatch) continue;
-
-      const amt = parseFloat(amtMatch[1]);
-      if (isNaN(amt) || amt <= 0 || amt > 1000000) continue;
-
-      // Extract first valid merchant string inside blockText
-      let merchant = "";
-      const blockLines = blockText.split("\n");
-      for (const line of blockLines) {
-        const cleaned = cleanMerchantName(line);
-        if (cleaned && !isNoiseMerchant(cleaned) && cleaned.length >= 2) {
-          merchant = cleaned;
-          break;
-        }
-      }
-
-      if (!merchant) continue;
-
-      // Extract date & time scoped strictly to blockText
-      const dateTime = extractDateTime(blockText);
-
-      parsedTransactions.push({
-        id: generateId(),
-        merchant: merchant,
-        amount: amt,
-        date: dateTime.date,
-        time: dateTime.time,
-        category: "",
-        source: "Screenshot OCR"
-      });
-    }
-
-    return parsedTransactions;
-  } catch (err) {
-    console.error("Block OCR error:", err);
-    return [];
-  }
+function isTimeToken(text) {
+  return /^\d{1,2}:\d{2}(\s?[AP]M)?$/i.test(String(text || "").trim());
 }
 
-// ==========================================
-// UNIFIED IMPORT CONTROLLER
-// ==========================================
+function isDateToken(text) {
+  const s = String(text || "").trim();
+  return (
+    /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)$/i.test(s) ||
+    /^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$/.test(s) ||
+    /^\d{1,2}\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)$/i.test(s) ||
+    /^20\d{2}$/.test(s)
+  );
+}
+
+function parseAmountToken(text) {
+  let rawText = String(text || "").trim();
+  if (!rawText) return null;
+  if (isTimeToken(rawText) || isDateToken(rawText) || rawText.includes(":")) return null;
+
+  const hasExplicitCurrency = /[₹RsINRinr]/i.test(rawText);
+  const hasLeadingMinusOrSymbol = /^[-–—~?zZeE32]/i.test(rawText);
+
+  let digitsOnly = rawText.replace(/[₹RsINRinr,\s]/gi, "").replace(/[^0-9]/g, "");
+  if (!digitsOnly) return null;
+
+  let value = Number(digitsOnly);
+  if (!Number.isFinite(value) || value <= 0 || value >= 500000) return null;
+  if (value >= 1900 && value <= 2100) return null;
+
+  if (!hasExplicitCurrency && hasLeadingMinusOrSymbol) {
+    if (digitsOnly.length >= 3 && (digitsOnly.startsWith("3") || digitsOnly.startsWith("2"))) {
+      const sliced = Number(digitsOnly.slice(1));
+      if (sliced > 0 && sliced < value) {
+        value = sliced;
+      }
+    }
+  }
+
+  return value;
+}
+
+function median(arr) {
+  if (!arr.length) return 0;
+  const s = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 !== 0 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+function buildLines(words) {
+  const usable = (words || [])
+    .filter(w => w.text && w.text.trim())
+    .sort((a, b) => {
+      const ay = (a.bbox.y0 + a.bbox.y1) / 2;
+      const by = (b.bbox.y0 + b.bbox.y1) / 2;
+      return ay - by || a.bbox.x0 - b.bbox.x0;
+    });
+
+  if (!usable.length) return [];
+
+  const heights = usable.map(w => w.bbox.y1 - w.bbox.y0).filter(Boolean);
+  const typicalHeight = Math.max(10, median(heights));
+  const tolerance = typicalHeight * 0.75;
+  const lines = [];
+
+  for (const word of usable) {
+    const cy = (word.bbox.y0 + word.bbox.y1) / 2;
+    let line = null;
+    for (const candidate of lines) {
+      if (Math.abs(candidate.cy - cy) <= tolerance) {
+        line = candidate;
+        break;
+      }
+    }
+    if (!line) {
+      line = { cy, words: [] };
+      lines.push(line);
+    }
+    line.words.push(word);
+    line.cy = line.words.reduce((sum, w) => sum + ((w.bbox.y0 + w.bbox.y1) / 2), 0) / line.words.length;
+  }
+
+  return lines.sort((a, b) => a.cy - b.cy);
+}
+
+function findLineAmount(line, imageWidth) {
+  const rightWords = line.words
+    .filter(w => w.bbox.x0 >= imageWidth * 0.40)
+    .sort((a, b) => b.bbox.x0 - a.bbox.x0);
+
+  for (const word of rightWords) {
+    const parsed = parseAmountToken(word.text);
+    if (parsed !== null) return { amount: parsed, word };
+  }
+  return null;
+}
+
+function merchantFromRegion(words, amountX, top, bottom) {
+  const merchantWords = words
+    .filter(w => {
+      const cy = (w.bbox.y0 + w.bbox.y1) / 2;
+      if (cy < top || cy > bottom) return false;
+      if (w.bbox.x0 >= amountX - 15) return false;
+      if (isTimeToken(w.text) || isDateToken(w.text)) return false;
+      if (/^\d+$/.test(String(w.text).trim())) return false;
+      return true;
+    })
+    .sort((a, b) => a.bbox.y0 - b.bbox.y0 || a.bbox.x0 - b.bbox.x0);
+
+  let merchant = merchantWords.map(w => w.text).join(" ").replace(/\s+/g, " ").trim();
+  merchant = merchant
+    .replace(/\b(history|filter|home|back|help|search|upi|payment|decredited|credited|paid to)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return merchant;
+}
+
+function extractDateTime(words) {
+  let date = "";
+  let time = "";
+  const rawText = words.map(w => w.text || "").join(" ");
+  const cleanText = rawText.replace(/[,;]/g, " ");
+
+  const timeMatch = cleanText.match(/\b(\d{1,2}:\d{2}\s*(?:AM|PM)?)\b/i);
+  if (timeMatch) time = timeMatch[1].replace(/\s+/g, "");
+
+  const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+  const dateMatch1 = cleanText.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)(?:\s+(\d{2,4}))?\b/i);
+  const dateMatch2 = cleanText.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+(\d{2,4}))?\b/i);
+  const dateMatch3 = cleanText.match(/\b(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})\b/);
+
+  const now = new Date();
+  let day, month, year = now.getFullYear();
+
+  if (dateMatch1) {
+    day = parseInt(dateMatch1[1], 10);
+    month = monthNames.indexOf(dateMatch1[2].toLowerCase()) + 1;
+    if (dateMatch1[3]) {
+      year = parseInt(dateMatch1[3], 10);
+      if (year < 100) year += 2000;
+    }
+  } else if (dateMatch2) {
+    day = parseInt(dateMatch2[2], 10);
+    month = monthNames.indexOf(dateMatch2[1].toLowerCase()) + 1;
+    if (dateMatch2[3]) {
+      year = parseInt(dateMatch2[3], 10);
+      if (year < 100) year += 2000;
+    }
+  } else if (dateMatch3) {
+    day = parseInt(dateMatch3[1], 10);
+    month = parseInt(dateMatch3[2], 10);
+    year = parseInt(dateMatch3[3], 10);
+    if (year < 100) year += 2000;
+  }
+
+  if (day && month) {
+    if (!dateMatch1?.[3] && !dateMatch2?.[3] && !dateMatch3) {
+      const currentMonth = now.getMonth() + 1;
+      if (month > currentMonth) {
+        year = year - 1;
+      }
+    }
+    date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  if (!date) date = new Date().toISOString().slice(0, 10);
+  return { date, time };
+}
+
+function extractRows(data) {
+  const words = data.words || [];
+  if (!words.length) return [];
+
+  const maxWordX = Math.max(...words.map(w => w.bbox ? w.bbox.x1 : 0), 1000);
+  const maxWordY = Math.max(...words.map(w => w.bbox ? w.bbox.y1 : 0), 1000);
+
+  const width = data.imageWidth || maxWordX;
+  const height = data.imageHeight || maxWordY;
+
+  const lines = buildLines(words);
+  const amountCandidates = [];
+
+  for (const line of lines) {
+    const found = findLineAmount(line, width);
+    if (found) {
+      amountCandidates.push({ amount: found.amount, word: found.word, cy: line.cy });
+    }
+  }
+
+  if (!amountCandidates.length) return [];
+
+  const amounts = [];
+  for (const candidate of amountCandidates) {
+    const duplicate = amounts.some(existing => Math.abs(existing.cy - candidate.cy) < 14 && existing.amount === candidate.amount);
+    if (!duplicate) amounts.push(candidate);
+  }
+
+  amounts.sort((a, b) => a.cy - b.cy);
+  const gaps = [];
+  for (let i = 1; i < amounts.length; i++) {
+    const gap = amounts[i].cy - amounts[i - 1].cy;
+    if (gap > 25 && gap < height * 0.35) gaps.push(gap);
+  }
+
+  const typicalGap = gaps.length ? median(gaps) : Math.max(55, height / Math.max(8, amounts.length));
+  const results = [];
+
+  for (let i = 0; i < amounts.length; i++) {
+    const current = amounts[i];
+    const previous = amounts[i - 1];
+    const next = amounts[i + 1];
+
+    let top = previous ? (previous.cy + current.cy) / 2 : current.cy - typicalGap / 2;
+    let bottom = next ? (current.cy + next.cy) / 2 : current.cy + typicalGap / 2;
+
+    const edgeMargin = Math.max(10, height * 0.01);
+    if (top <= edgeMargin || bottom >= height - edgeMargin) continue;
+
+    const maximumRegion = typicalGap * 1.7;
+    if (bottom - top > maximumRegion) {
+      top = current.cy - maximumRegion / 2;
+      bottom = current.cy + maximumRegion / 2;
+    }
+
+    const regionWords = words.filter(w => {
+      const cy = (w.bbox.y0 + w.bbox.y1) / 2;
+      return cy >= top && cy <= bottom;
+    });
+
+    const merchant = merchantFromRegion(regionWords, current.word.bbox.x0, top, bottom);
+    const dateTime = extractDateTime(regionWords);
+
+    results.push({
+      id: generateId(),
+      merchant: merchant || "Unidentified transaction",
+      amount: current.amount,
+      date: dateTime.date,
+      time: dateTime.time,
+      category: "",
+      source: "Screenshot OCR",
+      _y: current.cy
+    });
+  }
+
+  return results.sort((a, b) => a._y - b._y).map(({ _y, ...row }) => row);
+}
+
+function preprocessImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      try {
+        const targetWidth = Math.max(img.width, 1800);
+        const scale = targetWidth / img.width;
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const pixels = imageData.data;
+
+        let totalLuminance = 0;
+        for (let i = 0; i < pixels.length; i += 4) {
+          totalLuminance += 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
+        }
+        const avgLuminance = totalLuminance / (pixels.length / 4);
+        const isDarkMode = avgLuminance < 120;
+
+        for (let i = 0; i < pixels.length; i += 4) {
+          let gray = 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
+
+          if (isDarkMode) {
+            gray = 255 - gray;
+          }
+
+          const adjusted = Math.max(0, Math.min(255, (gray - 128) * 1.3 + 128));
+
+          pixels[i] = adjusted;
+          pixels[i + 1] = adjusted;
+          pixels[i + 2] = adjusted;
+        }
+
+        ctx.putImageData(imageData, 0, 0);
+        canvas.toBlob(blob => {
+          URL.revokeObjectURL(url);
+          resolve(blob || file);
+        }, "image/png");
+      } catch (error) {
+        URL.revokeObjectURL(url);
+        reject(error);
+      }
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not load image."));
+    };
+
+    img.src = url;
+  });
+}
+
 async function runOCR() {
   if (!files.length) return;
 
   if ($("#importBtn")) $("#importBtn").disabled = true;
   if ($("#ocrProgressWrap")) $("#ocrProgressWrap").classList.remove("hidden");
+  if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Reading transaction table…";
+  if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = "0%";
 
   let added = 0;
   let skipped = 0;
 
   try {
+    const worker = await Tesseract.createWorker("eng", 1, {
+      logger: message => {
+        if (message.status === "recognizing text") {
+          const progress = Math.round((message.progress || 0) * 100);
+          if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = `${progress}%`;
+          if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Reading screenshot… ${progress}%`;
+        }
+      }
+    });
+
+    await worker.setParameters({
+      preserve_interword_spaces: "1",
+      tessedit_pageseg_mode: "6",
+      user_defined_dpi: "300"
+    });
+
     for (let i = 0; i < files.length; i++) {
-      const imgTx = await parseImageFile(files[i]);
-      for (const transaction of imgTx) {
+      if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Reading screenshot ${i + 1} of ${files.length}…`;
+      const processed = await preprocessImage(files[i]);
+      const result = await worker.recognize(processed);
+      const transactions = extractRows(result.data);
+
+      for (const transaction of transactions) {
         const duplicate = state.transactions.some(
           existing =>
             existing.date === transaction.date &&
-            Math.abs(Number(existing.amount) - Number(transaction.amount)) < 0.01 &&
+            existing.time === transaction.time &&
+            Number(existing.amount) === Number(transaction.amount) &&
             String(existing.merchant).toLowerCase() === String(transaction.merchant).toLowerCase()
         );
 
@@ -746,24 +912,28 @@ async function runOCR() {
       }
     }
 
+    await worker.terminate();
     files = [];
     if ($("#fileInput")) $("#fileInput").value = "";
     if ($("#previews")) $("#previews").innerHTML = "";
+    if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = "100%";
+    if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `${added} transaction${added === 1 ? "" : "s"} detected`;
 
     save();
     showView("transactions");
-    alert(`${added} transaction${added === 1 ? "" : "s"} imported successfully.`);
+    if ($("#ocrStatus")) $("#ocrStatus").textContent = "● OCR engine ready";
+    alert(`${added} transaction${added === 1 ? "" : "s"} imported${skipped ? `; ${skipped} duplicate${skipped === 1 ? "" : "s"} skipped` : ""}.`);
   } catch (error) {
-    console.error("Import error:", error);
-    alert("An error occurred while reading the screenshot.");
+    console.error("OCR error:", error);
+    if ($("#ocrStatus")) $("#ocrStatus").textContent = "● OCR error";
+    alert("The screenshot could not be processed.");
   } finally {
     if ($("#importBtn")) $("#importBtn").disabled = !files.length;
-    if ($("#ocrProgressWrap")) $("#ocrProgressWrap").classList.add("hidden");
+    setTimeout(() => {
+      if ($("#ocrProgressWrap")) $("#ocrProgressWrap").classList.add("hidden");
+    }, 1000);
   }
 }
 
-// ==========================================
-// INITIALIZATION
-// ==========================================
 renderAll();
 showView(getActiveViewFromHash(), true);
