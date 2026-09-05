@@ -6,6 +6,7 @@
   <title>BudgetOS - Expense Tracker</title>
   <link rel="stylesheet" href="styles.css">
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 </head>
 <body>
   <div class="app">
@@ -124,7 +125,7 @@
           <p class="muted">Upload PhonePe, Google Pay, or Paytm receipts. OCR extracts date, time, merchant, and amount automatically.</p>
           
           <div class="dropzone">
-            <input type="file" id="fileInput" multiple accept="image/*">
+            <input type="file" id="fileInput" multiple accept="image/*,application/pdf">
             <div class="drop-content">
               <span class="upload-icon">📁</span>
               <p>Drag & drop screenshots here or <strong>browse files</strong></p>

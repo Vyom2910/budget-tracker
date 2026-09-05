@@ -446,12 +446,10 @@ function showView(v, updateHash = true) {
     }[targetView];
   }
 
-  // Update URL hash without triggering browser jump-scroll
   if (updateHash && window.location.hash !== `#${targetView}`) {
     history.pushState(null, "", `#${targetView}`);
   }
 
-  // Ensure view scroll position resets cleanly to top
   window.scrollTo(0, 0);
   const contentArea = $(".content");
   if (contentArea) contentArea.scrollTop = 0;
@@ -460,7 +458,6 @@ function showView(v, updateHash = true) {
 $$(".nav-item").forEach(b => b.onclick = () => showView(b.dataset.view));
 $$("[data-go]").forEach(b => b.onclick = () => showView(b.dataset.go));
 
-// Listen for browser Back/Forward navigation
 window.addEventListener("popstate", () => {
   showView(getActiveViewFromHash(), false);
 });
@@ -532,11 +529,21 @@ if ($("#form")) {
 function handleFiles(selectedFiles) {
   files = [...selectedFiles];
   if ($("#previews")) {
-    $("#previews").innerHTML = files.map((f, i) => `
-      <div class="preview">
-        <img src="${URL.createObjectURL(f)}" alt="Screenshot ${i + 1}">
-      </div>
-    `).join("");
+    $("#previews").innerHTML = files.map((f, i) => {
+      if (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")) {
+        return `
+          <div class="preview preview-pdf">
+            <span class="pdf-icon">📄</span>
+            <span class="pdf-name" title="${esc(f.name)}">${esc(f.name)}</span>
+          </div>
+        `;
+      }
+      return `
+        <div class="preview">
+          <img src="${URL.createObjectURL(f)}" alt="Screenshot ${i + 1}">
+        </div>
+      `;
+    }).join("");
   }
   if ($("#importBtn")) $("#importBtn").disabled = !files.length;
 }
@@ -860,12 +867,156 @@ function preprocessImage(file) {
   });
 }
 
+function convertPdfItemsToWords(items, viewportHeight) {
+  const words = [];
+  for (const item of items) {
+    const text = (item.str || "").trim();
+    if (!text) continue;
+
+    const transform = item.transform || [1, 0, 0, 1, 0, 0];
+    const x0 = transform[4];
+    const itemHeight = Math.abs(transform[3]) || item.height || 12;
+    const y0 = viewportHeight - transform[5] - itemHeight;
+    const y1 = viewportHeight - transform[5];
+    const totalWidth = item.width || (text.length * 8);
+
+    const parts = item.str.split(/(\s+)/);
+    let currentX = x0;
+
+    for (const part of parts) {
+      const partWidth = (part.length / (item.str.length || 1)) * totalWidth;
+      if (part.trim()) {
+        words.push({
+          text: part.trim(),
+          bbox: { x0: currentX, x1: currentX + partWidth, y0, y1 }
+        });
+      }
+      currentX += partWidth;
+    }
+  }
+  return words;
+}
+
+function parsePdfLineText(items, viewportHeight) {
+  const sorted = [...items].sort((a, b) => {
+    const yA = viewportHeight - a.transform[5];
+    const yB = viewportHeight - b.transform[5];
+    if (Math.abs(yA - yB) > 4) return yA - yB;
+    return a.transform[4] - b.transform[4];
+  });
+
+  const lines = [];
+  let currentLine = [];
+  let lastY = null;
+
+  for (const item of sorted) {
+    const y = viewportHeight - item.transform[5];
+    if (lastY !== null && Math.abs(y - lastY) > 5) {
+      if (currentLine.length) lines.push(currentLine.map(i => i.str).join(" "));
+      currentLine = [];
+    }
+    currentLine.push(item);
+    lastY = y;
+  }
+  if (currentLine.length) lines.push(currentLine.map(i => i.str).join(" "));
+
+  const results = [];
+
+  for (const lineStr of lines) {
+    const cleanLine = lineStr.replace(/\s+/g, " ").trim();
+    if (!cleanLine || cleanLine.toLowerCase().startsWith("name | bank")) continue;
+
+    if (cleanLine.includes("|")) {
+      const parts = cleanLine.split("|").map(p => p.trim());
+
+      if (parts.length >= 4) {
+        const merchant = parts[0];
+        const bankInfo = parts[1];
+        const rawAmount = parts[2];
+        const dateStr = parts[3];
+        const status = parts[4] ? parts[4].toUpperCase() : "";
+
+        if (status && status !== "SUCCESS") continue;
+
+        const parsedAmt = Math.abs(parseFloat(rawAmount.replace(/,/g, "")));
+        if (isNaN(parsedAmt) || parsedAmt <= 0) continue;
+
+        const dateTime = extractDateTime([{ text: dateStr }]);
+
+        if (merchant && merchant.length >= 2) {
+          results.push({
+            id: generateId(),
+            merchant,
+            amount: parsedAmt,
+            date: dateTime.date || dateStr,
+            time: dateTime.time || "12:00 PM",
+            category: "",
+            source: "PDF Statement"
+          });
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+async function processPdfFile(file, worker) {
+  if (typeof pdfjsLib === "undefined") return [];
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const extractedTransactions = [];
+
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const textContent = await page.getTextContent();
+    const items = textContent.items || [];
+    const viewport = page.getViewport({ scale: 1.5 });
+
+    if (items.length > 5) {
+      const words = convertPdfItemsToWords(items, viewport.height);
+      const rowTxs = extractRows({ words, imageWidth: viewport.width, imageHeight: viewport.height });
+      const lineTxs = parsePdfLineText(items, viewport.height);
+
+      const combined = [...rowTxs, ...lineTxs];
+      for (const tx of combined) {
+        const isDup = extractedTransactions.some(
+          e => e.date === tx.date && Number(e.amount) === Number(tx.amount) && e.merchant === tx.merchant
+        );
+        if (!isDup) extractedTransactions.push(tx);
+      }
+    } else {
+      const canvas = document.createElement("canvas");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext("2d");
+      await page.render({ canvasContext: ctx, viewport }).promise;
+
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+      if (blob) {
+        const processed = await preprocessImage(blob);
+        const result = await worker.recognize(processed);
+        const ocrTxs = extractRows(result.data);
+        for (const tx of ocrTxs) {
+          tx.source = "PDF OCR";
+          extractedTransactions.push(tx);
+        }
+      }
+    }
+  }
+
+  return extractedTransactions;
+}
+
 async function runOCR() {
   if (!files.length) return;
 
   if ($("#importBtn")) $("#importBtn").disabled = true;
   if ($("#ocrProgressWrap")) $("#ocrProgressWrap").classList.remove("hidden");
-  if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Reading transaction table…";
+  if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Reading files…";
   if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = "0%";
 
   let added = 0;
@@ -877,7 +1028,7 @@ async function runOCR() {
         if (message.status === "recognizing text") {
           const progress = Math.round((message.progress || 0) * 100);
           if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = `${progress}%`;
-          if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Reading screenshot… ${progress}%`;
+          if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Processing… ${progress}%`;
         }
       }
     });
@@ -889,10 +1040,17 @@ async function runOCR() {
     });
 
     for (let i = 0; i < files.length; i++) {
-      if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Reading screenshot ${i + 1} of ${files.length}…`;
-      const processed = await preprocessImage(files[i]);
-      const result = await worker.recognize(processed);
-      const transactions = extractRows(result.data);
+      const file = files[i];
+      if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Reading ${i + 1} of ${files.length}…`;
+
+      let transactions = [];
+      if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+        transactions = await processPdfFile(file, worker);
+      } else {
+        const processed = await preprocessImage(file);
+        const result = await worker.recognize(processed);
+        transactions = extractRows(result.data);
+      }
 
       for (const transaction of transactions) {
         const duplicate = state.transactions.some(
@@ -917,16 +1075,15 @@ async function runOCR() {
     if ($("#fileInput")) $("#fileInput").value = "";
     if ($("#previews")) $("#previews").innerHTML = "";
     if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = "100%";
-    if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `${added} transaction${added === 1 ? "" : "s"} detected`;
 
     save();
     showView("transactions");
-    if ($("#ocrStatus")) $("#ocrStatus").textContent = "● OCR engine ready";
+    if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Import complete";
     alert(`${added} transaction${added === 1 ? "" : "s"} imported${skipped ? `; ${skipped} duplicate${skipped === 1 ? "" : "s"} skipped` : ""}.`);
   } catch (error) {
-    console.error("OCR error:", error);
-    if ($("#ocrStatus")) $("#ocrStatus").textContent = "● OCR error";
-    alert("The screenshot could not be processed.");
+    console.error("OCR/PDF error:", error);
+    if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Import error";
+    alert("The file could not be processed.");
   } finally {
     if ($("#importBtn")) $("#importBtn").disabled = !files.length;
     setTimeout(() => {
