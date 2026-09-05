@@ -119,6 +119,8 @@ function esc(s) {
 function isNoiseMerchant(str) {
   const l = String(str || "").toLowerCase().trim();
   if (!l || l.length < 2) return true;
+  
+  // Directly filter out header OCR variations
   if (/^h[i1l]st?[o0]r[y1]|hisory|histry|history$/i.test(l)) return true;
   
   const noiseWords = [
@@ -143,14 +145,14 @@ function cleanMerchantName(str) {
   if (!str) return "";
   let clean = String(str || "").trim();
 
-  // Strip leading clock digits & icon artifacts (5.8, 5:35, gi., WwW, etc.)
+  // Strip OCR prefixes like "5.8", "gi.", "gi. 8", "WwW", clocks, and leading digits
   clean = clean
     .replace(/^(?:5\.8|gi\.\s*\d*|www|ww|vvw|vw|gt\.|g1\.|g\.)\s*/i, "")
     .replace(/^\d{1,2}[\.:]\d{2}\s*/, "")
     .replace(/^\d+(\.\d+)?\s+/, "")
     .replace(/^(Paid\s+to|Paid\s+at|Sent\s+to|Payment\s+to|Paying|To|Transfer\s+to)[:\s]*/i, "");
 
-  // Strip trailing transaction amounts or system keywords
+  // Remove trailing amount numbers, hyphens, and system tokens
   clean = clean
     .replace(/[-\u2013\u2014\u2212]\s*[₹RsINRinr\?fF£tT~*§¤\$]?\s*\d+.*/gi, "")
     .replace(/\s*-\s*\d+\s*$/g, "")
@@ -624,7 +626,7 @@ if (fileInputEl) {
 if ($("#importBtn")) $("#importBtn").onclick = runOCR;
 
 // ==========================================
-// SCREENSHOT OCR PARSER (REFINED)
+// ACCURATE SCREENSHOT OCR PARSER
 // ==========================================
 async function parseImageFile(file) {
   if (typeof Tesseract === "undefined") {
@@ -654,97 +656,89 @@ async function parseImageFile(file) {
 
     const totalLines = rawLines.length;
 
-    // 1. FILTER UI HEADER, STATUS BAR & FOOTER NOISE
+    // 1. FILTER OUT HEADER, NOISE AND SYSTEM ARTIFACTS
     const cleanedLines = rawLines.filter((line, index) => {
       const l = line.toLowerCase().trim();
       if (!l) return false;
 
-      // Ignore History header and common OCR misreads ("hisory", "histry", "h1story")
-      if (/^h[i1l]st?[o0]r[y1]|hisory|histry|history$/i.test(l)) return false;
+      // Filter out top title / history noise variations ("Hisory", "Histry", "History")
+      if (/^h[i1l]st?[o0]r[y1]$/i.test(l) || l === "hisory" || l === "histry") return false;
 
-      // Ignore top screen status bar & app header elements
+      // Filter out short junk symbols like "gi."
+      if (l.length <= 2 && !/\d/.test(l)) return false;
+
+      // Filter top status bar / header elements
       if (index < 3) {
-        if (/^\d{1,2}[\.:]\d{2}$/.test(l)) return false; // Clocks like 5:35, 5.35
-        if (/^\d{1,2}%?$/.test(l)) return false;     // Battery status
-        if (["history", "hisory", "histry", "transactions", "payment history", "home", "search", "?"].includes(l)) return false;
+        if (/^\d{1,2}[\.:]\d{2}$/.test(l)) return false;
+        if (/^\d{1,2}%?$/.test(l)) return false;
+        if (["history", "hisory", "histry", "transactions", "payment history", "home", "search"].includes(l)) return false;
       }
 
-      // Ignore bottom navigation & floating filter UI buttons
+      // Filter bottom UI noise
       if (index >= totalLines - 3) {
         if (["filter", "filters", "search", "export", "view details"].includes(l)) return false;
       }
-
-      if (["history", "hisory", "histry", "filter", "filters", "search"].includes(l)) return false;
 
       return true;
     });
 
     const transactions = [];
 
-    // 2. PARSE TRANSACTION ROWS & ISOLATE AMOUNT
+    // 2. PARSE EXACT AMOUNTS AND MERCHANTS
     for (let i = 0; i < cleanedLines.length; i++) {
       const line = cleanedLines[i];
 
-      if (/h[i1l]st?[o0]r[y1]|hisory|histry|history/i.test(line)) continue;
+      // Ignore title/header line if still remaining
+      if (/^h[i1l]st?[o0]r[y1]$/i.test(line) || /^hisory$/i.test(line)) continue;
 
-      // Match explicit negative amounts or currency values (-₹25, -25, -₹138, -125, -165, -340, etc.)
-      const amtRegex = /([-\u2013\u2014\u2212]\s*[₹RsINRinr\?fF£tT~*§¤\$]?\s*(\d+(?:\.\d{1,2})?))|([₹RsINRinr]\s*(\d+(?:\.\d{1,2})?))/i;
-      const amtMatch = line.match(amtRegex);
+      // PRIORITY 1: Extract hyphenated amount from merchant line (e.g., "- 25", "- 125", "- 165", "-340")
+      const inlineAmtMatch = line.match(/[-\u2013\u2014\u2212]\s*(\d+(?:\.\d{1,2})?)/);
 
-      if (amtMatch) {
-        const rawNumStr = amtMatch[2] || amtMatch[4] || amtMatch[0].replace(/[^\d.]/g, "");
-        const amt = parseFloat(rawNumStr);
+      let amt = null;
+      let textBeforeAmt = "";
 
-        if (!isNaN(amt) && amt > 0 && amt < 1000000 && !(amt >= 1990 && amt <= 2030 && !rawNumStr.includes("."))) {
-          let merchant = "";
+      if (inlineAmtMatch) {
+        amt = parseFloat(inlineAmtMatch[1]);
+        const matchIndex = line.indexOf(inlineAmtMatch[0]);
+        textBeforeAmt = line.substring(0, matchIndex);
+      } else {
+        // PRIORITY 2: Fallback to standard currency regex match if no hyphens exist
+        const amtMatch = line.match(/([₹RsINRinr]\s*(\d+(?:\.\d{1,2})?))/i);
+        if (amtMatch) {
+          amt = parseFloat(amtMatch[2]);
+          const matchIndex = line.indexOf(amtMatch[0]);
+          textBeforeAmt = line.substring(0, matchIndex);
+        }
+      }
 
-          // Extract text preceding the amount match
-          const amtIndex = line.indexOf(amtMatch[0]);
-          const textBeforeAmt = amtIndex > 0 ? line.substring(0, amtIndex) : "";
+      if (amt !== null && !isNaN(amt) && amt > 0 && amt < 1000000) {
+        let merchant = cleanMerchantName(textBeforeAmt);
 
-          if (textBeforeAmt && textBeforeAmt.trim().length >= 2) {
-            const cand = cleanMerchantName(textBeforeAmt);
-            if (cand && !isNoiseMerchant(cand)) {
-              merchant = cand;
-            }
-          }
-
-          // Context window for Date & Time
-          let windowLines = [];
-          for (let w = -2; w <= 2; w++) {
-            if (i + w >= 0 && i + w < cleanedLines.length) {
-              windowLines.push(cleanedLines[i + w]);
-            }
-          }
-          const dateTime = extractDateTime(windowLines.join(" "));
-
-          // Fallback to neighboring lines if merchant wasn't on the same line
-          if (!merchant) {
-            for (let back = 1; back <= 2; back++) {
-              if (i - back >= 0) {
-                const prevLine = cleanedLines[i - back];
-                if (isDateTimeLine(prevLine) || /h[i1l]st?[o0]r[y1]/i.test(prevLine)) continue;
-                const cand = cleanMerchantName(prevLine);
-                if (cand && cand.length >= 2 && !isNoiseMerchant(cand)) {
-                  merchant = cand;
-                  break;
-                }
-              }
-            }
-          }
-
-          if (!merchant && i + 1 < cleanedLines.length) {
-            const nextLine = cleanedLines[i + 1];
-            if (!isDateTimeLine(nextLine) && !/h[i1l]st?[o0]r[y1]/i.test(nextLine)) {
-              const cand = cleanMerchantName(nextLine);
+        // Look at previous line for merchant name if missing on current line
+        if (!merchant) {
+          for (let back = 1; back <= 2; back++) {
+            if (i - back >= 0) {
+              const prevLine = cleanedLines[i - back];
+              if (isDateTimeLine(prevLine) || /^h[i1l]st?[o0]r[y1]$/i.test(prevLine)) continue;
+              const cand = cleanMerchantName(prevLine);
               if (cand && cand.length >= 2 && !isNoiseMerchant(cand)) {
                 merchant = cand;
+                break;
               }
             }
           }
+        }
 
-          if (!merchant) merchant = "UPI Payment";
+        // Extract Date & Time context
+        let windowLines = [];
+        for (let w = -2; w <= 2; w++) {
+          if (i + w >= 0 && i + w < cleanedLines.length) {
+            windowLines.push(cleanedLines[i + w]);
+          }
+        }
+        const dateTime = extractDateTime(windowLines.join(" "));
 
+        if (merchant && !isNoiseMerchant(merchant)) {
           const isDup = transactions.some(t =>
             Math.abs(t.amount - amt) < 0.01 &&
             t.merchant.toLowerCase() === merchant.toLowerCase() &&
