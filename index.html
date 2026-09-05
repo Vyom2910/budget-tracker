@@ -64,12 +64,8 @@
     </section>
 
     <section id="transactions" class="view">
-      <div class="section-head"><div><h2>Transactions</h2><p>Tag each imported transaction manually.</p></div><button class="primary" id="addBtn">+ Add transaction</button></div>
-      <div class="card inbox"><strong id="inboxTitle">Uncategorized inbox</strong><span id="inboxText">0 transactions waiting for a category.</span></div>
-      <div class="card table">
-        <div class="table-head"><span>Date / time</span><span>Merchant</span><span>Amount</span><span>Category</span><span></span></div>
-        <div id="rows"></div>
-      </div>
+      <div id="uncatBanner" class="banner hidden"></div>
+      <div id="rows" class="table"></div>
     </section>
 
     <section id="upload" class="view">
