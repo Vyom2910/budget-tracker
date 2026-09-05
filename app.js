@@ -857,3 +857,75 @@ if (sidebarToggle && sidebar) {
     sidebarToggle.title = "Expand Sidebar";
   }
 }
+
+function renderCategoryHeader(category) {
+  const isUncategorized = category.id === 'uncategorized';
+  
+  return `
+    <div class="kanban-column-header">
+      <div class="kanban-title">
+        <span class="cat-icon">${category.icon || '📁'}</span>
+        <span class="cat-name">${category.name}</span>
+        <span class="kanban-badge">${category.count || 0}</span>
+      </div>
+      <div class="kanban-header-right">
+        <span class="kanban-col-sum">₹${category.total || 0}</span>
+        ${!isUncategorized ? `
+          <button class="delete-category-btn" data-id="${category.id}" title="Delete Category">×</button>
+        ` : ''}
+      </div>
+    </div>
+  `;
+}
+
+// Delete category and fallback expenses to Uncategorized
+function deleteCategory(categoryId) {
+  const categoryToDelete = categories.find(c => c.id === categoryId);
+  if (!categoryToDelete) return;
+
+  const confirmed = confirm(`Are you sure you want to delete this category?`);
+  if (!confirmed) return;
+
+  // Revert expenses in this category back to Uncategorized
+  transactions.forEach(tx => {
+    if (tx.categoryId === categoryId || tx.category === categoryToDelete.name) {
+      tx.categoryId = 'uncategorized';
+      tx.category = 'Uncategorized';
+    }
+  });
+
+  // Remove the category
+  categories = categories.filter(c => c.id !== categoryId);
+
+  // Save state & re-render board
+  saveData();
+  renderKanbanBoard();
+}
+
+// Add new category handler
+function handleAddCategory() {
+  const name = prompt("Enter new category name (e.g. Food, Shopping, Utilities):");
+  if (!name || !name.trim()) return;
+
+  const icon = prompt("Enter an icon/emoji for this category:", "🏷️") || "🏷️";
+  const newId = name.toLowerCase().trim().replace(/\s+/g, '-');
+
+  if (categories.some(c => c.id === newId)) {
+    alert("A category with this name already exists.");
+    return;
+  }
+
+  categories.push({ id: newId, name: name.trim(), icon: icon.trim() });
+  saveData();
+  renderKanbanBoard();
+}
+
+// Event Delegation for Column Delete Buttons
+document.getElementById('kanbanBoard').addEventListener('click', (e) => {
+  if (e.target.classList.contains('delete-category-btn')) {
+    const catId = e.target.getAttribute('data-id');
+    deleteCategory(catId);
+  }
+});
+
+document.getElementById('addCategoryBtn').addEventListener('click', handleAddCategory);
