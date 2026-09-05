@@ -35,7 +35,7 @@ if (typeof pdfjsLib !== "undefined") {
   pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 }
 
-// Transaction Status Guardrails (Filters out non-successful payments)
+// Transaction Status Guardrails
 const FAILED_STATUS_KEYWORDS = [
   "failed",
   "declined",
@@ -51,7 +51,10 @@ const FAILED_STATUS_KEYWORDS = [
 
 function isTransactionSuccessful(textBlock) {
   const lower = String(textBlock || "").toLowerCase();
-  return !FAILED_STATUS_KEYWORDS.some(keyword => lower.includes(keyword));
+  if (FAILED_STATUS_KEYWORDS.some(keyword => lower.includes(keyword))) {
+    return false;
+  }
+  return lower.includes("success");
 }
 
 // ==========================================
@@ -461,7 +464,7 @@ function renderAll() {
 }
 
 // ==========================================
-// ROUTING & NAVIGATION (NO JUMP-SCROLL)
+// ROUTING & NAVIGATION
 // ==========================================
 const VALID_VIEWS = ["dashboard", "transactions", "upload", "budget"];
 
@@ -480,7 +483,7 @@ function showView(v, updateHash = true) {
     $("#pageTitle").textContent = {
       dashboard: "Dashboard",
       transactions: "Transactions",
-      upload: "Upload screenshot",
+      upload: "Upload statement",
       budget: "Budget"
     }[targetView];
   }
@@ -569,24 +572,24 @@ if ($("#form")) {
 }
 
 // ==========================================
-// FILE HANDLERS & UPLOAD PREVIEWS
+// FILE SELECTION & UPLOAD HANDLERS
 // ==========================================
 function handleFiles(selectedFiles) {
-  files = [...selectedFiles];
+  files = Array.from(selectedFiles);
   if ($("#previews")) {
     $("#previews").innerHTML = files.map((f, i) => {
       const isPdf = f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
       if (isPdf) {
         return `
-          <div class="preview pdf-preview" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:12px;border:1px solid #ccc;border-radius:8px;background:#f9f9f9;width:120px;height:120px;text-align:center;">
+          <div class="preview pdf-preview" style="display:inline-flex;flex-direction:column;align-items:center;justify-content:center;padding:12px;border:1px solid #ccc;border-radius:8px;background:#f9f9f9;width:120px;height:120px;text-align:center;margin:6px;">
             <span style="font-size:2.2rem;">📄</span>
             <span style="font-size:0.75rem;word-break:break-all;margin-top:6px;font-weight:600;color:#333;">${esc(f.name)}</span>
           </div>
         `;
       }
       return `
-        <div class="preview">
-          <img src="${URL.createObjectURL(f)}" alt="Screenshot ${i + 1}">
+        <div class="preview" style="display:inline-block;margin:6px;">
+          <img src="${URL.createObjectURL(f)}" alt="Screenshot ${i + 1}" style="width:120px;height:120px;object-fit:cover;border-radius:8px;border:1px solid #ccc;">
         </div>
       `;
     }).join("");
@@ -594,14 +597,48 @@ function handleFiles(selectedFiles) {
   if ($("#importBtn")) $("#importBtn").disabled = !files.length;
 }
 
-if ($("#fileInput")) $("#fileInput").onchange = e => handleFiles(e.target.files);
+// Bind Click & Drag events to allow file browsing
+const dropzoneEl = $("#dropzone") || $(".dropzone");
+const fileInputEl = $("#fileInput");
+const browseBtnEl = $("#browseBtn");
 
-const dropzone = $(".dropzone");
-if (dropzone) {
-  dropzone.addEventListener("dragover", e => e.preventDefault());
-  dropzone.addEventListener("drop", e => {
+if (dropzoneEl) {
+  dropzoneEl.addEventListener("click", (e) => {
+    if (e.target !== fileInputEl && fileInputEl) {
+      fileInputEl.click();
+    }
+  });
+
+  dropzoneEl.addEventListener("dragover", e => {
     e.preventDefault();
-    if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+    dropzoneEl.classList.add("dragover");
+  });
+
+  dropzoneEl.addEventListener("dragleave", () => {
+    dropzoneEl.classList.remove("dragover");
+  });
+
+  dropzoneEl.addEventListener("drop", e => {
+    e.preventDefault();
+    dropzoneEl.classList.remove("dragover");
+    if (e.dataTransfer.files.length) {
+      handleFiles(e.dataTransfer.files);
+    }
+  });
+}
+
+if (browseBtnEl) {
+  browseBtnEl.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (fileInputEl) fileInputEl.click();
+  });
+}
+
+if (fileInputEl) {
+  fileInputEl.addEventListener("change", e => {
+    if (e.target.files && e.target.files.length) {
+      handleFiles(e.target.files);
+    }
   });
 }
 
@@ -610,47 +647,6 @@ if ($("#importBtn")) $("#importBtn").onclick = runOCR;
 // ==========================================
 // OCR & PDF PARSING LOGIC
 // ==========================================
-function isTimeToken(text) {
-  return /^\d{1,2}:\d{2}(\s?[AP]M)?$/i.test(String(text || "").trim());
-}
-
-function isDateToken(text) {
-  const s = String(text || "").trim();
-  return (
-    /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)$/i.test(s) ||
-    /^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$/.test(s) ||
-    /^\d{1,2}\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)$/i.test(s) ||
-    /^20\d{2}$/.test(s)
-  );
-}
-
-function parseAmountToken(text) {
-  let rawText = String(text || "").trim();
-  if (!rawText) return null;
-  if (isTimeToken(rawText) || isDateToken(rawText) || rawText.includes(":")) return null;
-
-  const hasExplicitCurrency = /[₹RsINRinr]/i.test(rawText);
-  const hasLeadingMinusOrSymbol = /^[-–—~?zZeE32]/i.test(rawText);
-
-  let digitsOnly = rawText.replace(/[₹RsINRinr,\s]/gi, "").replace(/[^0-9]/g, "");
-  if (!digitsOnly) return null;
-
-  let value = Number(digitsOnly);
-  if (!Number.isFinite(value) || value <= 0 || value >= 500000) return null;
-  if (value >= 1900 && value <= 2100) return null;
-
-  if (!hasExplicitCurrency && hasLeadingMinusOrSymbol) {
-    if (digitsOnly.length >= 3 && (digitsOnly.startsWith("3") || digitsOnly.startsWith("2"))) {
-      const sliced = Number(digitsOnly.slice(1));
-      if (sliced > 0 && sliced < value) {
-        value = sliced;
-      }
-    }
-  }
-
-  return value;
-}
-
 function median(arr) {
   if (!arr.length) return 0;
   const s = [...arr].sort((a, b) => a - b);
@@ -694,39 +690,6 @@ function buildLines(words) {
   return lines.sort((a, b) => a.cy - b.cy);
 }
 
-function findLineAmount(line, imageWidth) {
-  const rightWords = line.words
-    .filter(w => w.bbox.x0 >= imageWidth * 0.40)
-    .sort((a, b) => b.bbox.x0 - a.bbox.x0);
-
-  for (const word of rightWords) {
-    const parsed = parseAmountToken(word.text);
-    if (parsed !== null) return { amount: parsed, word };
-  }
-  return null;
-}
-
-function merchantFromRegion(words, amountX, top, bottom) {
-  const merchantWords = words
-    .filter(w => {
-      const cy = (w.bbox.y0 + w.bbox.y1) / 2;
-      if (cy < top || cy > bottom) return false;
-      if (w.bbox.x0 >= amountX - 15) return false;
-      if (isTimeToken(w.text) || isDateToken(w.text)) return false;
-      if (/^\d+$/.test(String(w.text).trim())) return false;
-      return true;
-    })
-    .sort((a, b) => a.bbox.y0 - b.bbox.y0 || a.bbox.x0 - b.bbox.x0);
-
-  let merchant = merchantWords.map(w => w.text).join(" ").replace(/\s+/g, " ").trim();
-  merchant = merchant
-    .replace(/\b(history|filter|home|back|help|search|upi|payment|decredited|credited|paid to)\b/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  return merchant;
-}
-
 function extractDateTime(words) {
   let date = "";
   let time = "";
@@ -738,8 +701,8 @@ function extractDateTime(words) {
 
   const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
-  const dateMatch1 = cleanText.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)(?:\s+(\d{2,4}))?\b/i);
-  const dateMatch2 = cleanText.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+(\d{2,4}))?\b/i);
+  const dateMatch1 = cleanText.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*(?:\s+(\d{2,4}))?\b/i);
+  const dateMatch2 = cleanText.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+(\d{2,4}))?\b/i);
   const dateMatch3 = cleanText.match(/\b(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})\b/);
 
   const now = new Date();
@@ -747,14 +710,14 @@ function extractDateTime(words) {
 
   if (dateMatch1) {
     day = parseInt(dateMatch1[1], 10);
-    month = monthNames.indexOf(dateMatch1[2].toLowerCase()) + 1;
+    month = monthNames.indexOf(dateMatch1[2].toLowerCase().slice(0, 3)) + 1;
     if (dateMatch1[3]) {
       year = parseInt(dateMatch1[3], 10);
       if (year < 100) year += 2000;
     }
   } else if (dateMatch2) {
     day = parseInt(dateMatch2[2], 10);
-    month = monthNames.indexOf(dateMatch2[1].toLowerCase()) + 1;
+    month = monthNames.indexOf(dateMatch2[1].toLowerCase().slice(0, 3)) + 1;
     if (dateMatch2[3]) {
       year = parseInt(dateMatch2[3], 10);
       if (year < 100) year += 2000;
@@ -767,12 +730,6 @@ function extractDateTime(words) {
   }
 
   if (day && month) {
-    if (!dateMatch1?.[3] && !dateMatch2?.[3] && !dateMatch3) {
-      const currentMonth = now.getMonth() + 1;
-      if (month > currentMonth) {
-        year = year - 1;
-      }
-    }
     date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
   }
 
@@ -780,90 +737,7 @@ function extractDateTime(words) {
   return { date, time };
 }
 
-// Extract rows from image with status guardrail
-function extractRows(data) {
-  const words = data.words || [];
-  if (!words.length) return [];
-
-  const maxWordX = Math.max(...words.map(w => w.bbox ? w.bbox.x1 : 0), 1000);
-  const maxWordY = Math.max(...words.map(w => w.bbox ? w.bbox.y1 : 0), 1000);
-
-  const width = data.imageWidth || maxWordX;
-  const height = data.imageHeight || maxWordY;
-
-  const lines = buildLines(words);
-  const amountCandidates = [];
-
-  for (const line of lines) {
-    const found = findLineAmount(line, width);
-    if (found) {
-      amountCandidates.push({ amount: found.amount, word: found.word, cy: line.cy });
-    }
-  }
-
-  if (!amountCandidates.length) return [];
-
-  const amounts = [];
-  for (const candidate of amountCandidates) {
-    const duplicate = amounts.some(existing => Math.abs(existing.cy - candidate.cy) < 14 && existing.amount === candidate.amount);
-    if (!duplicate) amounts.push(candidate);
-  }
-
-  amounts.sort((a, b) => a.cy - b.cy);
-  const gaps = [];
-  for (let i = 1; i < amounts.length; i++) {
-    const gap = amounts[i].cy - amounts[i - 1].cy;
-    if (gap > 25 && gap < height * 0.35) gaps.push(gap);
-  }
-
-  const typicalGap = gaps.length ? median(gaps) : Math.max(55, height / Math.max(8, amounts.length));
-  const results = [];
-
-  for (let i = 0; i < amounts.length; i++) {
-    const current = amounts[i];
-    const previous = amounts[i - 1];
-    const next = amounts[i + 1];
-
-    let top = previous ? (previous.cy + current.cy) / 2 : current.cy - typicalGap / 2;
-    let bottom = next ? (current.cy + next.cy) / 2 : current.cy + typicalGap / 2;
-
-    const edgeMargin = Math.max(10, height * 0.01);
-    if (top <= edgeMargin || bottom >= height - edgeMargin) continue;
-
-    const maximumRegion = typicalGap * 1.7;
-    if (bottom - top > maximumRegion) {
-      top = current.cy - maximumRegion / 2;
-      bottom = current.cy + maximumRegion / 2;
-    }
-
-    const regionWords = words.filter(w => {
-      const cy = (w.bbox.y0 + w.bbox.y1) / 2;
-      return cy >= top && cy <= bottom;
-    });
-
-    // Enforce status guardrail on raw screenshot text
-    const regionText = regionWords.map(w => w.text).join(" ");
-    if (!isTransactionSuccessful(regionText)) continue;
-
-    const merchant = merchantFromRegion(regionWords, current.word.bbox.x0, top, bottom);
-    const dateTime = extractDateTime(regionWords);
-
-    results.push({
-      id: generateId(),
-      merchant: merchant || "Unidentified transaction",
-      amount: current.amount,
-      date: dateTime.date,
-      time: dateTime.time,
-      category: "",
-      source: "Screenshot OCR",
-      _y: current.cy
-    });
-  }
-
-  return results.sort((a, b) => a._y - b._y).map(({ _y, ...row }) => row);
-}
-
-// PDF Parser using PDF.js
+// PDF Statement Parser tailored to UPI PDF layout
 async function parsePDFFile(file) {
   if (typeof pdfjsLib === "undefined") {
     console.error("PDF.js library is missing.");
@@ -895,22 +769,46 @@ async function parsePDFFile(file) {
     const lines = buildLines(items);
 
     for (const line of lines) {
-      const lineText = line.words.map(w => w.text).join(" ");
+      const lineText = line.words.map(w => w.text).join(" ").trim();
+      if (!lineText) continue;
 
-      // Enforce status guardrail
+      // Rule 1: Status must explicitly be SUCCESS (ignore FAILED / PENDING)
       if (!isTransactionSuccessful(lineText)) {
         continue;
       }
 
-      const foundAmount = findLineAmount(line, viewport.width);
-      if (foundAmount) {
-        const dateTime = extractDateTime(line.words);
-        const merchant = merchantFromRegion(line.words, foundAmount.word.bbox.x0, line.cy - 15, line.cy + 15);
+      // Rule 2: Payment must have explicit minus sign (e.g. -125.00, -109.00, -1.00)
+      const minusMatch = lineText.match(/(?:^|\s|\|)\s*-\s*([₹RsINRinr]?\s*\d+(?:\.\d{1,2})?)/i);
+      if (!minusMatch) continue;
 
+      const rawAmountNum = parseFloat(minusMatch[1].replace(/[₹RsINRinr,\s]/gi, ""));
+      if (isNaN(rawAmountNum) || rawAmountNum <= 0) continue;
+
+      // Parse Date
+      const dateTime = extractDateTime(line.words);
+
+      // Parse Merchant Name
+      let merchant = "";
+      if (lineText.includes("|")) {
+        const parts = lineText.split("|").map(p => p.trim());
+        merchant = parts[0] || "";
+      } else {
+        merchant = lineText
+          .replace(/(?:SUCCESS|FAILED|PENDING)/gi, "")
+          .replace(/-\s*[₹RsINRinr]?\s*\d+(?:\.\d{1,2})?/gi, "")
+          .replace(/\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4}\b/gi, "")
+          .replace(/\b(?:SBI|HDFC|ICICI|AXIS|BOB|PNB|UBI|YES)\s*\d*\b/gi, "")
+          .replace(/\s+/g, " ")
+          .trim();
+      }
+
+      merchant = merchant.replace(/^(Name|Transaction History)\s*/i, "").trim();
+
+      if (merchant && rawAmountNum) {
         transactions.push({
           id: generateId(),
-          merchant: merchant || "PDF Statement Payment",
-          amount: foundAmount.amount,
+          merchant: merchant,
+          amount: rawAmountNum,
           date: dateTime.date,
           time: dateTime.time,
           category: "",
@@ -923,65 +821,7 @@ async function parsePDFFile(file) {
   return transactions;
 }
 
-function preprocessImage(file) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      try {
-        const targetWidth = Math.max(img.width, 1800);
-        const scale = targetWidth / img.width;
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.round(img.width * scale);
-        canvas.height = Math.round(img.height * scale);
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const pixels = imageData.data;
-
-        let totalLuminance = 0;
-        for (let i = 0; i < pixels.length; i += 4) {
-          totalLuminance += 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
-        }
-        const avgLuminance = totalLuminance / (pixels.length / 4);
-        const isDarkMode = avgLuminance < 120;
-
-        for (let i = 0; i < pixels.length; i += 4) {
-          let gray = 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
-
-          if (isDarkMode) {
-            gray = 255 - gray;
-          }
-
-          const adjusted = Math.max(0, Math.min(255, (gray - 128) * 1.3 + 128));
-
-          pixels[i] = adjusted;
-          pixels[i + 1] = adjusted;
-          pixels[i + 2] = adjusted;
-        }
-
-        ctx.putImageData(imageData, 0, 0);
-        canvas.toBlob(blob => {
-          URL.revokeObjectURL(url);
-          resolve(blob || file);
-        }, "image/png");
-      } catch (error) {
-        URL.revokeObjectURL(url);
-        reject(error);
-      }
-    };
-
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("Could not load image."));
-    };
-
-    img.src = url;
-  });
-}
-
-// Integrated Import Orchestration (Images + PDFs)
+// Integrated Import Orchestration
 async function runOCR() {
   if (!files.length) return;
 
@@ -994,10 +834,9 @@ async function runOCR() {
   let skipped = 0;
 
   try {
-    const imageFiles = files.filter(f => f.type.startsWith("image/") && !f.name.toLowerCase().endsWith(".pdf"));
     const pdfFiles = files.filter(f => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"));
 
-    // 1. Process PDF Statement files
+    // Process PDF Statement files
     for (let i = 0; i < pdfFiles.length; i++) {
       if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Parsing PDF statement ${i + 1} of ${pdfFiles.length}…`;
       const pdfTx = await parsePDFFile(pdfFiles[i]);
@@ -1019,51 +858,6 @@ async function runOCR() {
       }
     }
 
-    // 2. Process Image Screenshots via Tesseract
-    if (imageFiles.length) {
-      const worker = await Tesseract.createWorker("eng", 1, {
-        logger: message => {
-          if (message.status === "recognizing text") {
-            const progress = Math.round((message.progress || 0) * 100);
-            if ($("#ocrProgressBar")) $("#ocrProgressBar").style.width = `${progress}%`;
-            if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Reading screenshot… ${progress}%`;
-          }
-        }
-      });
-
-      await worker.setParameters({
-        preserve_interword_spaces: "1",
-        tessedit_pageseg_mode: "6",
-        user_defined_dpi: "300"
-      });
-
-      for (let i = 0; i < imageFiles.length; i++) {
-        if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Reading screenshot ${i + 1} of ${imageFiles.length}…`;
-        const processed = await preprocessImage(imageFiles[i]);
-        const result = await worker.recognize(processed);
-        const transactions = extractRows(result.data);
-
-        for (const transaction of transactions) {
-          const duplicate = state.transactions.some(
-            existing =>
-              existing.date === transaction.date &&
-              existing.time === transaction.time &&
-              Number(existing.amount) === Number(transaction.amount) &&
-              String(existing.merchant).toLowerCase() === String(transaction.merchant).toLowerCase()
-          );
-
-          if (duplicate) {
-            skipped++;
-          } else {
-            state.transactions.push(transaction);
-            added++;
-          }
-        }
-      }
-
-      await worker.terminate();
-    }
-
     files = [];
     if ($("#fileInput")) $("#fileInput").value = "";
     if ($("#previews")) $("#previews").innerHTML = "";
@@ -1073,11 +867,11 @@ async function runOCR() {
     save();
     showView("transactions");
     if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Ready";
-    alert(`${added} transaction${added === 1 ? "" : "s"} imported${skipped ? `; ${skipped} duplicate/failed entry${skipped === 1 ? "" : "ies"} excluded` : ""}.`);
+    alert(`${added} payment${added === 1 ? "" : "s"} imported${skipped ? `; ${skipped} duplicate/failed entry${skipped === 1 ? "" : "ies"} excluded` : ""}.`);
   } catch (error) {
     console.error("Import error:", error);
     if ($("#ocrStatus")) $("#ocrStatus").textContent = "● Error processing file";
-    alert("An error occurred while reading the files.");
+    alert("An error occurred while reading the statement file.");
   } finally {
     if ($("#importBtn")) $("#importBtn").disabled = !files.length;
     setTimeout(() => {
