@@ -222,11 +222,6 @@ function renderTransactions() {
                       <button class="delete-card-btn" data-del="${t.id}" title="Delete transaction">×</button>
                     </div>
                   </div>
-                  <div class="kanban-card-middle">
-                    <select class="kanban-cat-select" data-id="${t.id}">
-                      ${options(t.category || "")}
-                    </select>
-                  </div>
                   <div class="kanban-card-bottom">
                     <span class="kanban-date">${fmtDate(t.date)}${t.time ? ` • ${esc(t.time)}` : ""}</span>
                     <strong class="kanban-amount">${money(t.amount)}</strong>
@@ -262,18 +257,6 @@ function renderTransactions() {
     el.onclick = (e) => {
       e.stopPropagation();
       openModal(el.dataset.edit);
-    };
-  });
-
-  $$(".kanban-cat-select").forEach(select => {
-    select.onchange = (e) => {
-      e.stopPropagation();
-      const id = select.dataset.id;
-      const t = state.transactions.find(x => x.id === id);
-      if (t) {
-        t.category = select.value;
-        save();
-      }
     };
   });
 

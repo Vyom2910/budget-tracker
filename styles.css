@@ -29,6 +29,7 @@ body {
 
 .sidebar {
   width: 240px;
+  flex-shrink: 0; /* Prevents sidebar from shrinking on wide pages */
   background: #181d23;
   border-right: 1px solid rgba(255, 255, 255, 0.06);
   padding: 24px 16px;
@@ -107,6 +108,7 @@ nav {
 
 .content {
   flex-grow: 1;
+  min-width: 0; /* Ensures inner flex overflow doesn't affect main layout */
   padding: 32px;
   overflow-y: auto;
 }
@@ -451,7 +453,7 @@ nav {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 6px;
+  margin-bottom: 10px;
 }
 
 .kanban-merchant {
@@ -504,26 +506,6 @@ nav {
 .delete-card-btn:hover {
   color: #df7777;
   background: rgba(223, 119, 119, 0.1);
-}
-
-.kanban-card-middle {
-  margin: 6px 0;
-}
-
-.kanban-cat-select {
-  width: 100%;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #c0c8d0;
-  border-radius: 6px;
-  padding: 4px 6px;
-  font-size: 0.75rem;
-  cursor: pointer;
-}
-
-.kanban-cat-select:focus {
-  outline: none;
-  border-color: #91b66a;
 }
 
 .kanban-card-bottom {
