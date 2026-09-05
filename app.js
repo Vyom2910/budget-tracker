@@ -45,16 +45,6 @@ const FAILED_STATUS_KEYWORDS = [
   "reversed"
 ];
 
-const FORBIDDEN_MERCHANT_WORDS = [
-  "transaction", "history", "details", "successful", "success", "failed", "pending",
-  "completed", "debit", "debited", "credit", "credited", "payment", "paid", "sent",
-  "transfer", "transferred", "to", "from", "balance", "account", "bank", "upi",
-  "ref", "reference", "id", "order", "number", "no", "gpay", "google pay", "phonepe",
-  "paytm", "cred", "bhim", "rupay", "view", "share", "receipt", "statement", "home",
-  "help", "support", "done", "repeat", "split", "check", "passbook", "total", "amount",
-  "filter", "search"
-];
-
 function isTransactionSuccessful(textBlock) {
   const lower = String(textBlock || "").toLowerCase();
   return !FAILED_STATUS_KEYWORDS.some(keyword => lower.includes(keyword));
@@ -129,18 +119,16 @@ function esc(s) {
 function cleanMerchantName(str) {
   if (!str) return "";
   let clean = str
-    .replace(/^(Paid\s+to|Paid\s+at|Sent\s+to|To|Transfer\s+to|Paying|Payment\s+to)[:\s]*/i, "")
-    .replace(/(?:SUCCESS|COMPLETED|PAID|SUCCESSFUL|FAILED|PENDING|UPI\s*ID|REF|TXN|ORDER|UTR|IMPS|NEFT).*/gi, "")
+    .replace(/^(Paid\s+to|Paid\s+at|Sent\s+to|Payment\s+to|Paying|To|Transfer\s+to)[:\s]*/i, "")
+    .replace(/(?:SUCCESSFUL|SUCCESS|COMPLETED|PAID|FAILED|PENDING|DEBITED|CREDITED|UPI\s*ID|REF|TXN|ORDER|UTR|IMPS|NEFT).*/gi, "")
     .replace(/[\?₹fF£tT~*§¤]/g, "")
     .replace(/[^\w\s&.-]/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 
   const lower = clean.toLowerCase();
-  if (!clean || FORBIDDEN_MERCHANT_WORDS.includes(lower) || clean.length < 2) {
-    return "";
-  }
-  if (/transaction\s*history/i.test(lower) || /payment\s*history/i.test(lower) || /payment\s*details/i.test(lower)) {
+  if (!clean || clean.length < 2) return "";
+  if (["transaction history", "payment history", "payment details", "transaction details", "history", "home", "search", "filter"].includes(lower)) {
     return "";
   }
   return clean;
@@ -736,7 +724,7 @@ if (fileInputEl) {
 if ($("#importBtn")) $("#importBtn").onclick = runOCR;
 
 // ==========================================
-// PDF PARSER
+// PDF STATEMENT PARSER
 // ==========================================
 function median(arr) {
   if (!arr.length) return 0;
@@ -860,7 +848,7 @@ async function parsePDFFile(file) {
 }
 
 // ==========================================
-// SCREENSHOT OCR PARSER (MULTI-ITEM LIST & SINGLE RECEIPT)
+// SCREENSHOT OCR PARSER (LISTS & SINGLE RECEIPTS)
 // ==========================================
 async function parseImageFile(file) {
   if (typeof Tesseract === "undefined") {
@@ -890,84 +878,81 @@ async function parseImageFile(file) {
 
     const transactions = [];
 
-    function isHeaderOrNoise(str) {
-      const lower = str.toLowerCase().trim();
-      if (!lower) return true;
-      if (lower === "history" || lower === "filter" || lower === "search" || lower === "payment history" || lower === "transaction history") return true;
-      if (/^\d{1,2}:\d{2}$/.test(lower)) return true;
-      if (/^\d{1,3}%$/.test(lower)) return true;
+    const isNoise = (str) => {
+      const l = str.toLowerCase().trim();
+      if (!l) return true;
+      if (["history", "filter", "search", "payment history", "transaction history", "check balance", "view details", "successful", "completed"].includes(l)) return true;
+      if (/^\d{1,2}:\d{2}(\s*(am|pm))?$/i.test(l)) return true;
+      if (/^\d{1,3}%$/.test(l)) return true;
       return false;
-    }
+    };
 
-    // Line-by-line scanner to extract ALL individual row items from history list screens
+    // 1. SCAN LINE-BY-LINE FOR LIST SCREENSHOTS (GPay / PhonePe / Cred / Paytm lists)
     for (let i = 0; i < rawLines.length; i++) {
       const line = rawLines[i];
-      if (isHeaderOrNoise(line)) continue;
+      if (isNoise(line)) continue;
 
-      const amountMatch = line.match(/(?:-\s*)?(?:[?₹fF£tT~*§¤]|Rs\.?|INR)\s*([\d,]+(?:\.\d{1,2})?)/i) ||
-                          line.match(/(?:^|\s)-\s*₹?\s*([\d,]+(?:\.\d{1,2})?)/);
+      // Extract amount candidate (supports ₹150, Rs.150, -150, 150.00, etc.)
+      const amtMatch = line.match(/(?:[₹RsINR\-\?fF£tT~*§¤]\s*)?([\d,]+(?:\.\d{1,2})?)/i);
+      if (!amtMatch) continue;
 
-      if (!amountMatch) continue;
+      const hasSymbol = /[₹RsINR\-\?fF£tT~*§¤]/i.test(line);
+      const hasDecimal = /\d+\.\d{2}/.test(line);
 
-      let amt = parseFloat(amountMatch[1].replace(/,/g, ""));
+      const rawNumStr = amtMatch[1].replace(/,/g, "");
+      const amt = parseFloat(rawNumStr);
+
       if (isNaN(amt) || amt <= 0 || amt > 1000000) continue;
+      if (!hasSymbol && !hasDecimal && (amt >= 1990 && amt <= 2030)) continue; // Skip years
+      if (!hasSymbol && !hasDecimal && amt > 10000) continue; // Skip mobile or order IDs
 
-      if (!line.includes("₹") && !line.includes("Rs") && !line.includes("INR") && !line.includes("-") && amt >= 1990 && amt <= 2035) {
-        continue;
+      let merchant = "";
+
+      // Check text on the same line before the amount
+      const parts = line.split(amtMatch[0]);
+      if (parts[0] && parts[0].trim().length >= 2) {
+        merchant = cleanMerchantName(parts[0]);
       }
 
-      if (/\b\d{10}\b/.test(line)) continue;
-
-      let detectedMerchant = "";
-
-      const lineBeforeAmount = line.split(amountMatch[0])[0].trim();
-      if (lineBeforeAmount && !isHeaderOrNoise(lineBeforeAmount)) {
-        detectedMerchant = cleanMerchantName(lineBeforeAmount);
-      }
-
-      if (!detectedMerchant) {
-        for (let offset = 1; offset <= 3; offset++) {
-          if (i - offset >= 0) {
-            const prevLine = rawLines[i - offset];
-            if (isHeaderOrNoise(prevLine)) continue;
-
-            if (/^\d{1,2}:\d{2}\s*(?:AM|PM)?\s*,?\s*\d{1,2}\s+[A-Za-z]{3}/i.test(prevLine)) continue;
-            if (/^\d{1,2}:\d{2}\s*(?:AM|PM)?$/i.test(prevLine)) continue;
-
-            const candidate = cleanMerchantName(prevLine);
-            if (candidate && candidate.length >= 2) {
-              detectedMerchant = candidate;
+      // Check preceding lines if missing
+      if (!merchant) {
+        for (let back = 1; back <= 3; back++) {
+          if (i - back >= 0) {
+            const prevLine = rawLines[i - back];
+            if (isNoise(prevLine)) continue;
+            const cand = cleanMerchantName(prevLine);
+            if (cand && cand.length >= 2) {
+              merchant = cand;
               break;
             }
           }
         }
       }
 
-      if (!detectedMerchant && i + 1 < rawLines.length) {
+      // Check next line if still missing
+      if (!merchant && i + 1 < rawLines.length) {
         const nextLine = rawLines[i + 1];
-        if (!isHeaderOrNoise(nextLine) && !/^\d{1,2}:\d{2}/.test(nextLine)) {
-          detectedMerchant = cleanMerchantName(nextLine);
+        if (!isNoise(nextLine)) {
+          merchant = cleanMerchantName(nextLine);
         }
       }
 
-      if (!detectedMerchant || detectedMerchant.length < 2) {
-        detectedMerchant = "UPI Payment";
-      }
+      if (!merchant) merchant = "UPI Payment";
 
-      let entryContext = "";
-      for (let offset = -2; offset <= 2; offset++) {
-        if (i + offset >= 0 && i + offset < rawLines.length) {
-          entryContext += " " + rawLines[i + offset];
+      // Context window for date and time
+      let windowText = "";
+      for (let w = -2; w <= 2; w++) {
+        if (i + w >= 0 && i + w < rawLines.length) {
+          windowText += " " + rawLines[i + w];
         }
       }
+      const dateTime = extractDateTime(windowText);
 
-      const dateTime = extractDateTime(entryContext);
-
-      const isDup = transactions.some(t => Math.abs(t.amount - amt) < 0.01 && t.merchant === detectedMerchant && t.date === dateTime.date);
-      if (!isDup) {
+      const isDup = transactions.some(t => Math.abs(t.amount - amt) < 0.01 && t.merchant === merchant && t.date === dateTime.date);
+      if (!isDup && (hasSymbol || hasDecimal || merchant !== "UPI Payment")) {
         transactions.push({
           id: generateId(),
-          merchant: detectedMerchant,
+          merchant: merchant,
           amount: amt,
           date: dateTime.date,
           time: dateTime.time,
@@ -977,15 +962,26 @@ async function parseImageFile(file) {
       }
     }
 
-    // Fallback for single receipt screen if no transactions were found above
+    // 2. FALLBACK FOR SINGLE RECEIPT SCREENSHOTS
     if (transactions.length === 0) {
-      let singleAmt = 0;
-      const currencyMatch = rawText.match(/(?:[?₹fF£tT~*§¤]|Rs\.?|INR)\s*([\d,]+(?:\.\d{1,2})?)/i);
-      if (currencyMatch) {
-        singleAmt = parseFloat(currencyMatch[1].replace(/,/g, ""));
+      const allAmounts = [];
+      const globalAmtRegex = /(?:[₹RsINR\-\?fF£tT~*§¤]\s*)?([\d,]+(?:\.\d{1,2})?)/gi;
+      let m;
+      while ((m = globalAmtRegex.exec(rawText)) !== null) {
+        const hasSym = /[₹RsINR\-\?fF£tT~*§¤]/i.test(m[0]);
+        const val = parseFloat(m[1].replace(/,/g, ""));
+        if (!isNaN(val) && val > 0 && val < 1000000) {
+          if (hasSym || m[1].includes(".")) {
+            if (!(val >= 1990 && val <= 2030 && !m[1].includes("."))) {
+              allAmounts.push(val);
+            }
+          }
+        }
       }
 
-      if (singleAmt > 0) {
+      if (allAmounts.length > 0) {
+        const primaryAmt = allAmounts[0];
+
         let singleMerchant = "";
         const mMatch = rawText.match(/(?:Paid\s+to|Paid\s+at|To|Sent\s+to|Transfer\s+to|Paying|Payment\s+to)[:\s]*(.+)/i);
         if (mMatch) {
@@ -994,7 +990,7 @@ async function parseImageFile(file) {
 
         if (!singleMerchant) {
           for (const l of rawLines) {
-            if (isHeaderOrNoise(l)) continue;
+            if (isNoise(l)) continue;
             const cleanL = cleanMerchantName(l);
             if (cleanL && cleanL.length >= 2) {
               singleMerchant = cleanL;
@@ -1007,7 +1003,7 @@ async function parseImageFile(file) {
         transactions.push({
           id: generateId(),
           merchant: singleMerchant || "UPI Payment",
-          amount: singleAmt,
+          amount: primaryAmt,
           date: dateTime.date,
           time: dateTime.time,
           category: "",
@@ -1023,7 +1019,9 @@ async function parseImageFile(file) {
   }
 }
 
-// Combined Import Process
+// ==========================================
+// UNIFIED IMPORT CONTROLLER
+// ==========================================
 async function runOCR() {
   if (!files.length) return;
 
@@ -1046,6 +1044,7 @@ async function runOCR() {
   let processed = 0;
 
   try {
+    // Process PDF statements
     for (let i = 0; i < pdfFiles.length; i++) {
       processed++;
       if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Parsing PDF statement ${i + 1} of ${pdfFiles.length}…`;
@@ -1070,6 +1069,7 @@ async function runOCR() {
       }
     }
 
+    // Process Screenshot images
     for (let i = 0; i < imageFiles.length; i++) {
       processed++;
       if ($("#ocrProgressText")) $("#ocrProgressText").textContent = `Scanning screenshot ${i + 1} of ${imageFiles.length}…`;
